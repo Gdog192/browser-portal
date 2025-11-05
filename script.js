@@ -49,9 +49,57 @@ function openSite(site) {
     iframeContainer.classList.remove('hidden');
     siteTitle.textContent = site.name;
 
+    // Clear any previous error
+    const errorMsg = document.getElementById('iframe-error');
+    if (errorMsg) errorMsg.remove();
+
     // Load site through proxy
     const proxyUrl = `/api/proxy?url=${encodeURIComponent(site.url)}`;
     contentFrame.src = proxyUrl;
+    
+    // Add error handler for iframe
+    contentFrame.onerror = () => {
+        showIframeError('Failed to load site. The site may be blocking proxy requests or require authentication.');
+    };
+    
+    // Handle iframe load errors
+    contentFrame.onload = () => {
+        try {
+            // Check if iframe content is accessible (same-origin policy may block this)
+            const iframeDoc = contentFrame.contentDocument || contentFrame.contentWindow.document;
+        } catch (e) {
+            // Cross-origin error is normal, but if we get here and content is empty, might be an issue
+            console.log('Iframe loaded (cross-origin check normal)');
+        }
+    };
+}
+
+function showIframeError(message) {
+    const iframeContainer = document.getElementById('iframe-container');
+    const contentFrame = document.getElementById('content-frame');
+    
+    // Remove existing error if any
+    const existingError = document.getElementById('iframe-error');
+    if (existingError) existingError.remove();
+    
+    // Create error message
+    const errorDiv = document.createElement('div');
+    errorDiv.id = 'iframe-error';
+    errorDiv.style.cssText = 'background: #ff6b6b; color: white; padding: 20px; margin: 20px; border-radius: 8px; text-align: center;';
+    errorDiv.innerHTML = `
+        <h3>⚠️ Unable to Load Site</h3>
+        <p>${message}</p>
+        <p><strong>Common reasons:</strong></p>
+        <ul style="text-align: left; display: inline-block;">
+            <li>Site blocks proxy requests (Netflix, YouTube, etc.)</li>
+            <li>Site requires authentication</li>
+            <li>Connection timeout</li>
+        </ul>
+        <p><button onclick="document.getElementById('iframe-container').querySelector('#back-button').click()" style="margin-top: 10px; padding: 10px 20px; background: white; color: #ff6b6b; border: none; border-radius: 5px; cursor: pointer;">← Back to Sites</button></p>
+    `;
+    
+    // Insert error before iframe
+    contentFrame.parentNode.insertBefore(errorDiv, contentFrame);
 }
 
 function goBack() {
