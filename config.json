@@ -1,0 +1,47 @@
+{
+  "sites": [
+    {
+      "name": "Netflix",
+      "url": "https://www.netflix.com",
+      "icon": "🎬"
+    },
+    {
+      "name": "Perplexity AI",
+      "url": "https://www.perplexity.ai",
+      "icon": "🤖"
+    },
+    {
+      "name": "ESPN Fantasy",
+      "url": "https://www.espn.com/fantasy",
+      "icon": "🏈"
+    },
+    {
+      "name": "YouTube",
+      "url": "https://www.youtube.com",
+      "icon": "📺"
+    },
+    {
+      "name": "Reddit",
+      "url": "https://www.reddit.com",
+      "icon": "💬"
+    },
+    {
+      "name": "Discord",
+      "url": "https://discord.com",
+      "icon": "💬"
+    },
+    {
+      "name": "GitHub",
+      "url": "https://github.com",
+      "icon": "💻"
+    },
+    {
+      "name": "Wikipedia",
+      "url": "https://www.wikipedia.org",
+      "icon": "📚"
+    }
+  ],
+  "rateLimit": 100,
+  "port": 3000
+}
+

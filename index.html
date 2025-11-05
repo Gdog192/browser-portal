@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Portal</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Browser Portal</h1>
+            <p class="subtitle">Select a site to browse</p>
+        </header>
+
+        <div id="site-grid" class="site-grid">
+            <!-- Sites will be loaded dynamically from config.json -->
+        </div>
+
+        <div id="iframe-container" class="iframe-container hidden">
+            <div class="iframe-header">
+                <button id="back-button" class="back-button">← Back to Sites</button>
+                <span id="site-title" class="site-title"></span>
+            </div>
+            <iframe id="content-frame" src="" frameborder="0"></iframe>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
