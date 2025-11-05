@@ -2,6 +2,9 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,13 +49,71 @@ function rateLimitMiddleware(req, res, next) {
     next();
 }
 
-// Config endpoint
-app.get('/api/config', (req, res) => {
-    res.json({
-        sites: config.sites,
-        port: PORT
-    });
-});
+// Function to rewrite URLs in HTML content
+function rewriteUrls(content, baseUrl, proxyBase) {
+    if (!content || typeof content !== 'string') return content;
+    
+    try {
+        const base = new URL(baseUrl);
+        const baseHost = base.origin;
+        
+        // Rewrite absolute URLs
+        content = content.replace(/https?:\/\/[^"'\s<>]+/gi, (url) => {
+            try {
+                const urlObj = new URL(url);
+                // Only rewrite URLs from the same origin
+                if (urlObj.origin === baseHost || url.startsWith(baseHost)) {
+                    return `${proxyBase}?url=${encodeURIComponent(url)}`;
+                }
+                return url;
+            } catch (e) {
+                return url;
+            }
+        });
+        
+        // Rewrite relative URLs (src, href, action attributes)
+        const attrPatterns = [
+            /(src|href|action)=["']([^"']+)["']/gi,
+            /(src|href|action)=([^\s>]+)/gi,
+            /url\(["']?([^"')]+)["']?\)/gi
+        ];
+        
+        attrPatterns.forEach(pattern => {
+            content = content.replace(pattern, (match, attr, url) => {
+                if (!url) return match;
+                
+                // Skip data URLs and javascript: URLs
+                if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#')) {
+                    return match;
+                }
+                
+                try {
+                    let fullUrl;
+                    if (url.startsWith('http://') || url.startsWith('https://')) {
+                        fullUrl = url;
+                    } else if (url.startsWith('//')) {
+                        fullUrl = base.protocol + url;
+                    } else {
+                        fullUrl = new URL(url, baseUrl).href;
+                    }
+                    
+                    // Only rewrite if it's from the same origin
+                    const urlObj = new URL(fullUrl);
+                    if (urlObj.origin === baseHost) {
+                        return match.replace(url, `${proxyBase}?url=${encodeURIComponent(fullUrl)}`);
+                    }
+                } catch (e) {
+                    // Invalid URL, skip
+                }
+                return match;
+            });
+        });
+        
+        return content;
+    } catch (e) {
+        return content;
+    }
+}
 
 // Proxy endpoint
 app.get('/api/proxy', rateLimitMiddleware, (req, res, next) => {
@@ -81,6 +142,7 @@ app.get('/api/proxy', rateLimitMiddleware, (req, res, next) => {
         ws: false, // Disable WebSocket support for security
         timeout: 60000, // 60 second timeout
         proxyTimeout: 60000,
+        selfHandleResponse: true, // Handle response ourselves to rewrite URLs
         pathRewrite: {
             '^/api/proxy': ''
         },
@@ -115,6 +177,43 @@ app.get('/api/proxy', rateLimitMiddleware, (req, res, next) => {
             const location = proxyRes.headers['location'];
             if (location && location.startsWith('http')) {
                 proxyRes.headers['location'] = `/api/proxy?url=${encodeURIComponent(location)}`;
+            }
+            
+            // Buffer HTML/CSS/JS content to rewrite URLs
+            const contentType = proxyRes.headers['content-type'] || '';
+            const isHTML = contentType.includes('text/html') || contentType.includes('application/xhtml');
+            const isCSS = contentType.includes('text/css');
+            const isJS = contentType.includes('application/javascript') || contentType.includes('text/javascript');
+            
+            if (isHTML || isCSS || isJS) {
+                const chunks = [];
+                
+                proxyRes.on('data', (chunk) => {
+                    chunks.push(chunk);
+                });
+                
+                proxyRes.on('end', () => {
+                    const body = Buffer.concat(chunks).toString('utf8');
+                    const rewritten = rewriteUrls(body, targetUrl, '/api/proxy');
+                    
+                    // Set headers
+                    Object.keys(proxyRes.headers).forEach(key => {
+                        if (key !== 'content-length') {
+                            res.setHeader(key, proxyRes.headers[key]);
+                        }
+                    });
+                    
+                    res.setHeader('Content-Length', Buffer.byteLength(rewritten, 'utf8'));
+                    res.status(proxyRes.statusCode);
+                    res.end(rewritten);
+                });
+            } else {
+                // For non-HTML content, just pipe it through
+                Object.keys(proxyRes.headers).forEach(key => {
+                    res.setHeader(key, proxyRes.headers[key]);
+                });
+                res.status(proxyRes.statusCode);
+                proxyRes.pipe(res);
             }
         },
         onError: (err, req, res) => {
