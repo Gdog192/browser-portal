@@ -11,6 +11,11 @@
       "icon": "🤖"
     },
     {
+      "name": "ChatGPT",
+      "url": "https://chat.openai.com",
+      "icon": "💬"
+    },
+    {
       "name": "ESPN Fantasy",
       "url": "https://www.espn.com/fantasy",
       "icon": "🏈"
