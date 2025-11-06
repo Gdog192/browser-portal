@@ -3,323 +3,247 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const https = require('https');
 const { URL } = require('url');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Increase timeout for Render
-app.timeout = 60000;
+// Trust proxy (so req.ip is correct behind load balancers)
+app.set('trust proxy', true);
 
 // Load configuration
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const configPath = path.join(__dirname, 'config.json');
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+  console.warn('Warning: config.json missing or invalid, falling back to defaults');
+  config = {};
+}
+
+// Build allowlist of hostnames
+const envAllowed = (process.env.ALLOWED_HOSTS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const allowedHosts = new Set(envAllowed);
+if (Array.isArray(config.allowedHosts)) {
+  config.allowedHosts.forEach(h => allowedHosts.add(h));
+} else if (Array.isArray(config.sites)) {
+  config.sites.forEach(site => {
+    try {
+      const u = new URL(site.url);
+      allowedHosts.add(u.hostname);
+    } catch (e) {
+      // ignore invalid site URLs
+    }
+  });
+}
+// Always allow localhost for local testing
+allowedHosts.add('localhost');
+allowedHosts.add('127.0.0.1');
 
 // Serve static files
 app.use(express.static(path.join(__dirname)));
 
-// Rate limiting middleware (simple in-memory store)
-const requestCounts = new Map();
-const RATE_LIMIT = config.rateLimit || 100; // requests per minute per IP
-const RATE_WINDOW = 60000; // 1 minute
+// Helmet: enable common security headers but avoid setting X-Frame-Options because portal intentionally embeds sites
+app.use(helmet({ frameguard: false }));
 
-function rateLimitMiddleware(req, res, next) {
-    const ip = req.ip || req.connection.remoteAddress;
-    const now = Date.now();
-    
-    if (!requestCounts.has(ip)) {
-        requestCounts.set(ip, { count: 1, resetTime: now + RATE_WINDOW });
-        return next();
-    }
-    
-    const record = requestCounts.get(ip);
-    
-    if (now > record.resetTime) {
-        record.count = 1;
-        record.resetTime = now + RATE_WINDOW;
-        return next();
-    }
-    
-    record.count++;
-    
-    if (record.count > RATE_LIMIT) {
-        return res.status(429).json({ error: 'Rate limit exceeded' });
-    }
-    
-    next();
+// Rate limiter (more robust than in-memory counters)
+const limiter = rateLimit({
+  windowMs: config.rateLimitWindowMs || 60 * 1000,
+  max: config.rateLimit || 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ error: 'Rate limit exceeded' })
+});
+app.use('/api/proxy', limiter);
+
+// Utility: check if hostname is allowed
+function isAllowedHost(hostname) {
+  if (!hostname) return false;
+  return allowedHosts.has(hostname);
 }
 
-// Function to rewrite URLs in HTML content
+// Function to rewrite URLs in HTML/CSS/JS content
 function rewriteUrls(content, baseUrl, proxyBase) {
-    if (!content || typeof content !== 'string') return content;
-    
-    try {
-        const base = new URL(baseUrl);
-        const baseHost = base.origin;
-        
-        // Rewrite absolute URLs
-        content = content.replace(/https?:\/\/[^"'\s<>]+/gi, (url) => {
-            try {
-                const urlObj = new URL(url);
-                // Only rewrite URLs from the same origin
-                if (urlObj.origin === baseHost || url.startsWith(baseHost)) {
-                    return `${proxyBase}?url=${encodeURIComponent(url)}`;
-                }
-                return url;
-            } catch (e) {
-                return url;
-            }
-        });
-        
-        // Rewrite relative URLs (src, href, action attributes)
-        const attrPatterns = [
-            /(src|href|action)=["']([^"']+)["']/gi,
-            /(src|href|action)=([^\s>]+)/gi,
-            /url\(["']?([^"')]+)["']?\)/gi
-        ];
-        
-        attrPatterns.forEach(pattern => {
-            content = content.replace(pattern, (match, attr, url) => {
-                if (!url) return match;
-                
-                // Skip data URLs and javascript: URLs
-                if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#')) {
-                    return match;
-                }
-                
-                try {
-                    let fullUrl;
-                    if (url.startsWith('http://') || url.startsWith('https://')) {
-                        fullUrl = url;
-                    } else if (url.startsWith('//')) {
-                        fullUrl = base.protocol + url;
-                    } else {
-                        fullUrl = new URL(url, baseUrl).href;
-                    }
-                    
-                    // Only rewrite if it's from the same origin
-                    const urlObj = new URL(fullUrl);
-                    if (urlObj.origin === baseHost) {
-                        return match.replace(url, `${proxyBase}?url=${encodeURIComponent(fullUrl)}`);
-                    }
-                } catch (e) {
-                    // Invalid URL, skip
-                }
-                return match;
-            });
-        });
-        
-        return content;
-    } catch (e) {
-        return content;
-    }
+  if (!content || typeof content !== 'string') return content;
+  try {
+    const base = new URL(baseUrl);
+    const baseHost = base.origin;
+
+    // Absolute URLs
+    content = content.replace(/https?:\/\/[^"'\s<>]+/gi, (url) => {
+      try {
+        const urlObj = new URL(url);
+        if (urlObj.origin === baseHost || url.startsWith(baseHost)) {
+          return `${proxyBase}?url=${encodeURIComponent(url)}`;
+        }
+        return url;
+      } catch (e) {
+        return url;
+      }
+    });
+
+    // Attributes and url(...) patterns
+    const attrPatterns = [
+      /(src|href|action)=['"]([^"']+)['"]/gi,
+      /(src|href|action)=([^\s>]+)/gi,
+      /url\(['"]?([^"')]+)['"]?\)/gi
+    ];
+
+    attrPatterns.forEach(pattern => {
+      content = content.replace(pattern, (match, attr, url) => {
+        if (!url) return match;
+        if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#')) return match;
+        try {
+          let fullUrl;
+          if (url.startsWith('http://') || url.startsWith('https://')) {
+            fullUrl = url;
+          } else if (url.startsWith('//')) {
+            fullUrl = base.protocol + url;
+          } else {
+            fullUrl = new URL(url, baseUrl).href;
+          }
+          const urlObj = new URL(fullUrl);
+          if (urlObj.origin === baseHost) {
+            return match.replace(url, `${proxyBase}?url=${encodeURIComponent(fullUrl)}`);
+          }
+        } catch (e) {
+          // ignore
+        }
+        return match;
+      });
+    });
+
+    return content;
+  } catch (e) {
+    return content;
+  }
 }
 
-// Proxy endpoint
-app.get('/api/proxy', rateLimitMiddleware, (req, res, next) => {
+// Proxy endpoint handler factory
+function createProxyHandler() {
+  return (req, res, next) => {
     const targetUrl = req.query.url;
-    
-    if (!targetUrl) {
-        return res.status(400).json({ error: 'URL parameter is required' });
-    }
-    
-    // Validate URL format
+    if (!targetUrl) return res.status(400).json({ error: 'URL parameter is required' });
+
+    let target;
     try {
-        const url = new URL(targetUrl);
-        // Only allow http/https protocols
-        if (!['http:', 'https:'].includes(url.protocol)) {
-            return res.status(400).json({ error: 'Invalid protocol' });
-        }
+      target = new URL(targetUrl);
+      if (!['http:', 'https:'].includes(target.protocol)) {
+        return res.status(400).json({ error: 'Invalid protocol' });
+      }
     } catch (e) {
-        return res.status(400).json({ error: 'Invalid URL format' });
+      return res.status(400).json({ error: 'Invalid URL format' });
     }
-    
-    // Create proxy middleware
+
+    // If env ALLOW_ANY_TARGET is set to 'true', allow all hosts (user requested option B)
+    const allowAny = String(process.env.ALLOW_ANY_TARGET || '').toLowerCase() === 'true';
+    if (!allowAny && !isAllowedHost(target.hostname)) {
+      return res.status(403).json({ error: 'Target host is not allowed' });
+    }
+
     const proxy = createProxyMiddleware({
-        target: targetUrl,
-        changeOrigin: true,
-        followRedirects: true,
-        ws: false, // Disable WebSocket support for security
-        timeout: 60000, // 60 second timeout
-        proxyTimeout: 60000,
-        selfHandleResponse: true, // Handle response ourselves to rewrite URLs
-        pathRewrite: {
-            '^/api/proxy': ''
-        },
-        onProxyReq: (proxyReq, req, res) => {
-            // Set headers to appear as normal browser request
-            proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-            proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8');
-            proxyReq.setHeader('Accept-Language', 'en-US,en;q=0.9');
-            // Don't request compression - we need to rewrite content
-            proxyReq.setHeader('Accept-Encoding', 'identity');
-            proxyReq.setHeader('Referer', req.headers.referer || targetUrl);
-            
-            // Set timeout on the request
-            proxyReq.setTimeout(60000);
-        },
-        onProxyRes: (proxyRes, req, res) => {
-            // Remove X-Frame-Options header to allow iframe embedding
-            delete proxyRes.headers['x-frame-options'];
-            delete proxyRes.headers['X-Frame-Options'];
-            
-            // Remove Content-Security-Policy frame-ancestors
-            if (proxyRes.headers['content-security-policy']) {
-                proxyRes.headers['content-security-policy'] = proxyRes.headers['content-security-policy']
-                    .replace(/frame-ancestors[^;]*;?/gi, '');
-            }
-            
-            // Set CORS headers to allow embedding
-            proxyRes.headers['Access-Control-Allow-Origin'] = '*';
-            proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
-            proxyRes.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
-            
-            // Rewrite URLs in response headers
-            const location = proxyRes.headers['location'];
-            if (location && location.startsWith('http')) {
-                proxyRes.headers['location'] = `/api/proxy?url=${encodeURIComponent(location)}`;
-            }
-            
-            // Buffer HTML/CSS/JS content to rewrite URLs
-            const contentType = proxyRes.headers['content-type'] || '';
-            const isHTML = contentType.includes('text/html') || contentType.includes('application/xhtml');
-            const isCSS = contentType.includes('text/css');
-            const isJS = contentType.includes('application/javascript') || contentType.includes('text/javascript');
-            
-            if (isHTML || isCSS || isJS) {
-                const chunks = [];
-                
-                proxyRes.on('data', (chunk) => {
-                    chunks.push(chunk);
-                });
-                
-                proxyRes.on('end', () => {
-                    const body = Buffer.concat(chunks).toString('utf8');
-                    const rewritten = rewriteUrls(body, targetUrl, '/api/proxy');
-                    
-                    // Set headers
-                    Object.keys(proxyRes.headers).forEach(key => {
-                        if (key !== 'content-length') {
-                            res.setHeader(key, proxyRes.headers[key]);
-                        }
-                    });
-                    
-                    res.setHeader('Content-Length', Buffer.byteLength(rewritten, 'utf8'));
-                    res.status(proxyRes.statusCode);
-                    res.end(rewritten);
-                });
-            } else {
-                // For non-HTML content, just pipe it through
-                Object.keys(proxyRes.headers).forEach(key => {
-                    res.setHeader(key, proxyRes.headers[key]);
-                });
-                res.status(proxyRes.statusCode);
-                proxyRes.pipe(res);
-            }
-        },
-        onError: (err, req, res) => {
-            console.error('Proxy error:', err.message);
-            if (!res.headersSent) {
-                if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') {
-                    res.status(502).send(`
-                        <html>
-                            <head><title>Proxy Error</title></head>
-                            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                                <h1>502 Bad Gateway</h1>
-                                <p>The requested site could not be reached through the proxy.</p>
-                                <p><strong>Possible reasons:</strong></p>
-                                <ul style="text-align: left; display: inline-block;">
-                                    <li>The site may be blocking proxy requests</li>
-                                    <li>Connection timeout (try again)</li>
-                                    <li>The site may require authentication</li>
-                                </ul>
-                                <p><a href="/">← Back to Portal</a></p>
-                            </body>
-                        </html>
-                    `);
-                } else {
-                    res.status(500).send(`
-                        <html>
-                            <head><title>Proxy Error</title></head>
-                            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                                <h1>Proxy Error</h1>
-                                <p>An error occurred while proxying the request.</p>
-                                <p><a href="/">← Back to Portal</a></p>
-                            </body>
-                        </html>
-                    `);
-                }
-            }
+      target: targetUrl,
+      changeOrigin: true,
+      followRedirects: true,
+      ws: false,
+      timeout: 60_000,
+      proxyTimeout: 60_000,
+      selfHandleResponse: true,
+      pathRewrite: { '^/api/proxy': '' },
+      onProxyReq: (proxyReq, req, res) => {
+        proxyReq.setHeader('User-Agent', req.headers['user-agent'] || 'Mozilla/5.0');
+        proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8');
+        proxyReq.setHeader('Accept-Language', req.headers['accept-language'] || 'en-US,en;q=0.9');
+        proxyReq.setHeader('Accept-Encoding', 'identity');
+        proxyReq.setHeader('Referer', req.headers.referer || targetUrl);
+        proxyReq.setTimeout(60_000);
+      },
+      onProxyRes: (proxyRes, req, res) => {
+        // Normalize header keys
+        const headers = {};
+        Object.keys(proxyRes.headers || {}).forEach(k => {
+          headers[k.toLowerCase()] = proxyRes.headers[k];
+        });
+
+        // Remove framing header(s)
+        delete headers['x-frame-options'];
+
+        // Remove frame-ancestors from CSP
+        if (headers['content-security-policy']) {
+          headers['content-security-policy'] = headers['content-security-policy'].replace(/frame-ancestors[^;]*;?/gi, '');
         }
+
+        // CORS for embedding via iframe when needed
+        headers['access-control-allow-origin'] = headers['access-control-allow-origin'] || '*';
+        headers['access-control-allow-methods'] = headers['access-control-allow-methods'] || 'GET, POST, PUT, DELETE, OPTIONS';
+        headers['access-control-allow-headers'] = headers['access-control-allow-headers'] || 'Content-Type, Authorization';
+
+        // Rewrite location header to route back through proxy
+        if (headers['location'] && headers['location'].startsWith('http')) {
+          headers['location'] = `/api/proxy?url=${encodeURIComponent(headers['location'])}`;
+        }
+
+        // Sanitize Set-Cookie: strip Domain attribute so cookies are not set for upstream domain
+        if (headers['set-cookie']) {
+          try {
+            headers['set-cookie'] = headers['set-cookie'].map(cookie => cookie.replace(/;\s*Domain=[^;]+/i, ''));
+          } catch (e) {
+            // leave as-is if something unexpected
+          }
+        }
+
+        const contentType = headers['content-type'] || '';
+        const isHTML = contentType.includes('text/html') || contentType.includes('application/xhtml+xml');
+        const isCSS = contentType.includes('text/css');
+        const isJS = contentType.includes('application/javascript') || contentType.includes('text/javascript');
+
+        if (isHTML || isCSS || isJS) {
+          const chunks = [];
+          proxyRes.on('data', chunk => chunks.push(chunk));
+          proxyRes.on('end', () => {
+            const body = Buffer.concat(chunks).toString('utf8');
+            const rewritten = rewriteUrls(body, targetUrl, '/api/proxy');
+
+            Object.keys(headers).forEach(key => {
+              if (key !== 'content-length') res.setHeader(key, headers[key]);
+            });
+            res.setHeader('Content-Length', Buffer.byteLength(rewritten, 'utf8'));
+            res.status(proxyRes.statusCode).send(rewritten);
+          });
+        } else {
+          Object.keys(headers).forEach(key => res.setHeader(key, headers[key]));
+          res.status(proxyRes.statusCode);
+          proxyRes.pipe(res);
+        }
+      },
+      onError: (err, req, res) => {
+        console.error('Proxy error:', err && err.message);
+        if (!res.headersSent) {
+          if (err && (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT')) {
+            res.status(502).send(`<html><body><h1>502 Bad Gateway</h1><p>The requested site could not be reached.</p><p><a href="/">Back</a></p></body></html>`);
+          } else {
+            res.status(500).send(`<html><body><h1>Proxy Error</h1><p>An error occurred while proxying the request.</p><p><a href="/">Back</a></p></body></html>`);
+          }
+        }
+      }
     });
-    
-    proxy(req, res, next);
+
+    return proxy(req, res, next);
+  };
+}
+
+app.get('/api/proxy', createProxyHandler());
+app.post('/api/proxy', createProxyHandler());
+
+// Start server and set HTTP server timeout for Render-like platforms
+const server = http.createServer(app);
+server.timeout = 60_000;
+server.listen(PORT, () => {
+  console.log(`Browser Portal Server running on port ${PORT}`);
+  console.log(`Access it at http://localhost:${PORT}`);
 });
-
-// Handle POST requests for proxy (for forms, etc.)
-app.post('/api/proxy', rateLimitMiddleware, (req, res, next) => {
-    const targetUrl = req.query.url;
-    
-    if (!targetUrl) {
-        return res.status(400).json({ error: 'URL parameter is required' });
-    }
-    
-    try {
-        new URL(targetUrl);
-    } catch (e) {
-        return res.status(400).json({ error: 'Invalid URL format' });
-    }
-    
-    const proxy = createProxyMiddleware({
-        target: targetUrl,
-        changeOrigin: true,
-        followRedirects: true,
-        ws: false,
-        timeout: 60000,
-        proxyTimeout: 60000,
-        onProxyReq: (proxyReq, req, res) => {
-            proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-            proxyReq.setTimeout(60000);
-        },
-        onProxyRes: (proxyRes, req, res) => {
-            delete proxyRes.headers['x-frame-options'];
-            delete proxyRes.headers['X-Frame-Options'];
-            proxyRes.headers['Access-Control-Allow-Origin'] = '*';
-        },
-        onError: (err, req, res) => {
-            console.error('Proxy error:', err.message);
-            if (!res.headersSent) {
-                res.status(502).send(`
-                    <html>
-                        <head><title>Proxy Error</title></head>
-                        <body style="font-family: Arial; text-align: center; padding: 50px;">
-                            <h1>502 Bad Gateway</h1>
-                            <p>The requested site could not be reached.</p>
-                            <p><a href="/">← Back to Portal</a></p>
-                        </body>
-                    </html>
-                `);
-            }
-        }
-    });
-    
-    proxy(req, res, next);
-});
-
-// Clean up rate limit store periodically
-setInterval(() => {
-    const now = Date.now();
-    for (const [ip, record] of requestCounts.entries()) {
-        if (now > record.resetTime) {
-            requestCounts.delete(ip);
-        }
-    }
-}, RATE_WINDOW);
-
-// Start server
-app.listen(PORT, () => {
-    console.log(`Browser Portal Server running on port ${PORT}`);
-    console.log(`Access it at http://localhost:${PORT}`);
-    console.log(`Make sure to configure your domain to point to this server`);
-});
-
