@@ -237,6 +237,11 @@ function createProxyHandler() {
   };
 }
 
+
+// API endpoint to serve config to frontend
+app.get('/api/config', (req, res) => {
+    res.json({ sites: config.sites || [] });
+  });
 app.get('/api/proxy', createProxyHandler());
 app.post('/api/proxy', createProxyHandler());
 
