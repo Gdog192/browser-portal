@@ -1,6 +1,6 @@
 # Browser Proxy Portal
 
-A minimal web portal that allows you to browse popular sites through iframes, accessible via your GoDaddy domain. The proxy server bypasses X-Frame-Options restrictions and helps avoid detection by content filtering systems.
+A minimal web portal that allows you to browse popular sites through iframes, accessible via your GoDaddy domain. The proxy server bypasses X-Frame-Options restrictions and helps avoid detection by some sites. Use with caution and follow the security guidance provided.
 
 **🚀 Recommended: Deploy to Cloud (Render/Railway)** - See [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) for easy cloud setup (no home PC needed, free HTTPS included!)
 
@@ -11,6 +11,14 @@ A minimal web portal that allows you to browse popular sites through iframes, ac
 - Rate limiting to prevent abuse
 - Easy configuration via JSON file
 - Minimal resource usage
+
+## Environment variables
+
+The server can be configured via environment variables (useful for cloud deployments):
+
+- PORT - Port to listen on (platforms like Render/Heroku set this automatically).
+- ALLOWED_HOSTS - Optional comma-separated list of hostnames that the proxy is allowed to target (e.g. "example.com,another.com"). If not set, the server derives allowed hosts from config.json sites and always allows localhost.
+- ALLOW_ANY_TARGET - If set to "true", disables the host allowlist and permits proxying to any host. This is less secure and should only be used for local testing.
 
 ## Quick Start (Cloud Deployment - Recommended)
 
@@ -23,7 +31,7 @@ A minimal web portal that allows you to browse popular sites through iframes, ac
 
 ## Prerequisites (Home PC Setup)
 
-- Node.js (v14 or higher) installed on your home PC
+- Node.js (v18 or higher) installed on your home PC
 - A domain name configured with GoDaddy
 - Router with port forwarding capability
 - Static IP address (or dynamic DNS service)
@@ -64,7 +72,7 @@ npm run dev
 npm start
 ```
 
-The server will start on port 3000 by default (or the port specified in `config.json`).
+The server will start on the port specified by the PORT environment variable or default to 3000.
 
 ## Deployment Setup
 
@@ -113,18 +121,7 @@ For better security and to avoid mixed content warnings:
 
 **Option C: Use Node.js HTTPS (Simple)**
 1. Obtain SSL certificate (Let's Encrypt via Certbot)
-2. Modify `server.js` to use HTTPS:
-   ```javascript
-   const https = require('https');
-   const fs = require('fs');
-   
-   const options = {
-     key: fs.readFileSync('path/to/private-key.pem'),
-     cert: fs.readFileSync('path/to/certificate.pem')
-   };
-   
-   https.createServer(options, app).listen(443);
-   ```
+2. Modify `server.js` to use HTTPS (example in original README)
 
 ### Step 4: Configure Firewall
 
@@ -211,7 +208,7 @@ Some sites actively block iframe embedding even with X-Frame-Options removed. Th
 
 ### Server Crashes
 
-- Check Node.js version: `node --version` (should be v14+)
+- Check Node.js version: `node --version` (should be v18+)
 - Review server logs for error messages
 - Ensure port isn't already in use by another application
 
@@ -232,4 +229,3 @@ This tool is for educational purposes. Ensure you comply with:
 ## License
 
 MIT License - Feel free to modify and use as needed.
-
