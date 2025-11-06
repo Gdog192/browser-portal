@@ -46,7 +46,20 @@
       "icon": "📚"
     }
   ],
+  "allowedHosts": [
+    "www.netflix.com",
+    "www.perplexity.ai",
+    "chat.openai.com",
+    "www.espn.com",
+    "www.youtube.com",
+    "www.reddit.com",
+    "discord.com",
+    "github.com",
+    "www.wikipedia.org",
+    "localhost",
+    "127.0.0.1"
+  ],
   "rateLimit": 100,
+  "rateLimitWindowMs": 60000,
   "port": 3000
 }
-
