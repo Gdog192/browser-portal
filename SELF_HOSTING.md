@@ -2,18 +2,49 @@
 
 > **Why Self-Host?** Using your home PC with residential IP avoids proxy detection that affects cloud hosting services like Render.
 
-## Quick Start (5 Minutes)
+---
 
-### Option A: Cloudflare Tunnel (Recommended - Free Forever)
+## 🚀 Quick Start (Recommended - Easiest Way)
 
-#### Step 1: Install Cloudflare Tunnel
+### **TWO Simple Steps:**
 
-**Windows:**
-```bash
-# Download from: https://github.com/cloudflare/cloudflared/releases
-# Or use winget:
+#### **Step 1: Download Your Code**
+
+Open PowerShell and run:
+
+```powershell
+# Navigate to where you want the folder
+cd $env:USERPROFILE\Documents
+
+# Clone the repository
+git clone https://github.com/Gdog192/browser-portal.git
+
+# Navigate into the folder
+cd browser-portal
+
+# Install dependencies
+npm install
+```
+
+**Don't have Git?** Download ZIP from GitHub:
+1. Go to https://github.com/Gdog192/browser-portal
+2. Click green "Code" button → "Download ZIP"
+3. Extract to `C:\Users\YOUR_USERNAME\Documents\browser-portal`
+4. Open PowerShell in that folder and run `npm install`
+
+---
+
+#### **Step 2: Install Cloudflare Tunnel**
+
+**Windows (using winget):**
+```powershell
 winget install --id Cloudflare.cloudflared
 ```
+
+**Or download manually:**
+- Go to: https://github.com/cloudflare/cloudflared/releases/latest
+- Download: `cloudflared-windows-amd64.exe`
+- Rename to `cloudflared.exe` and add to PATH
 
 **Mac:**
 ```bash
@@ -26,32 +57,82 @@ wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudfla
 sudo dpkg -i cloudflared-linux-amd64.deb
 ```
 
-#### Step 2: Authenticate Cloudflare
-```bash
+---
+
+## ✅ Start Your Server (Every Time)
+
+### **You Need TWO PowerShell Windows:**
+
+#### **Window 1: Start Node.js Server**
+
+```powershell
+cd C:\Users\YOUR_USERNAME\Documents\browser-portal
+npm start
+```
+
+✅ You should see:
+```
+Browser Portal Server running on port 3000
+Access it at http://localhost:3000
+```
+
+**Keep this window open!**
+
+---
+
+#### **Window 2: Start Cloudflare Tunnel**
+
+Open a **NEW** PowerShell window:
+
+```powershell
+cloudflared tunnel --url http://localhost:3000
+```
+
+✅ You'll get a URL like:
+```
+https://abc-def-123.trycloudflare.com
+```
+
+**That's your public URL!** Share it with anyone. ✨
+
+---
+
+## 🔒 Option: Create Permanent Tunnel (Optional)
+
+If you want a URL that doesn't change:
+
+### **Step 1: Login to Cloudflare**
+
+```powershell
 cloudflared tunnel login
 ```
-This opens a browser - sign in with your Cloudflare account (free signup at cloudflare.com)
 
-#### Step 3: Create a Tunnel
-```bash
+- Opens your browser
+- Login or create free Cloudflare account
+- Authorizes your computer
+
+### **Step 2: Create Named Tunnel**
+
+```powershell
 cloudflared tunnel create browser-portal
 ```
+
 Note the Tunnel ID shown (e.g., `abc123-def456-ghi789`)
 
-#### Step 4: Configure the Tunnel
-Create a file called `config.yml` in your browser-portal folder:
+### **Step 3: Create Config File**
 
+Create `cloudflared-config.yml` in your browser-portal folder:
+
+**Windows:**
 ```yaml
 tunnel: YOUR_TUNNEL_ID_HERE
-credentials-file: C:\\Users\\YOUR_USERNAME\\.cloudflared\\YOUR_TUNNEL_ID.json
+credentials-file: C:\Users\YOUR_USERNAME\.cloudflared\YOUR_TUNNEL_ID.json
 
 ingress:
-  - hostname: your-domain.com
-    service: http://localhost:3000
-  - service: http_status:404
+  - service: http://localhost:3000
 ```
 
-**For a free subdomain (no custom domain needed):**
+**Mac/Linux:**
 ```yaml
 tunnel: YOUR_TUNNEL_ID_HERE
 credentials-file: /Users/YOUR_USERNAME/.cloudflared/YOUR_TUNNEL_ID.json
@@ -60,50 +141,39 @@ ingress:
   - service: http://localhost:3000
 ```
 
-#### Step 5: Start Your Server
-```bash
-# Terminal 1: Start your Node.js server
+### **Step 4: Run Permanent Tunnel**
+
+```powershell
+# Window 1: Start Node server
 npm start
 
-# Terminal 2: Start the tunnel
-cloudflared tunnel run browser-portal
+# Window 2: Start tunnel with config
+cloudflared tunnel --config cloudflared-config.yml run browser-portal
 ```
-
-#### Step 6: Get Your Public URL
-If using a free subdomain, Cloudflare will show you a URL like:
-```
-https://abc-def-ghi.trycloudflare.com
-```
-
-### Option B: Quick Tunnel (Testing Only)
-
-For instant testing without setup:
-
-```bash
-# Start your server
-npm start
-
-# In another terminal:
-cloudflared tunnel --url http://localhost:3000
-```
-
-You'll get a temporary URL instantly (changes each time).
 
 ---
 
-## Custom Domain Setup (Optional)
+## 🌐 Custom Domain Setup (Advanced)
 
-If you have a GoDaddy domain:
+If you have a domain (like from GoDaddy):
 
-### Step 1: Add Domain to Cloudflare Tunnel
-```bash
+### **Step 1: Add Domain to Cloudflare**
+
+1. Sign up at cloudflare.com
+2. Add your domain
+3. Update nameservers at GoDaddy to Cloudflare's nameservers
+
+### **Step 2: Route Tunnel to Domain**
+
+```powershell
 cloudflared tunnel route dns browser-portal portal.yourdomain.com
 ```
 
-### Step 2: Update config.yml
+### **Step 3: Update Config**
+
 ```yaml
 tunnel: YOUR_TUNNEL_ID
-credentials-file: /path/to/.cloudflared/YOUR_TUNNEL_ID.json
+credentials-file: C:\Users\YOUR_USERNAME\.cloudflared\YOUR_TUNNEL_ID.json
 
 ingress:
   - hostname: portal.yourdomain.com
@@ -111,155 +181,226 @@ ingress:
   - service: http_status:404
 ```
 
-### Step 3: Update DNS in Cloudflare Dashboard
-1. Go to your Cloudflare dashboard
-2. Select your domain
-3. DNS → Add record:
-   - Type: CNAME
-   - Name: portal
-   - Target: YOUR_TUNNEL_ID.cfargotunnel.com
-   - Proxy: Enabled (orange cloud)
+Now access at: `https://portal.yourdomain.com`
 
 ---
 
-## Run as Background Service
+## 🔄 Run on Startup (Windows)
 
-### Windows (Run on Startup)
+### **Option 1: Batch File**
 
-1. Create `start-tunnel.bat`:
+Create `start-portal.bat` in your browser-portal folder:
+
 ```batch
 @echo off
-cd C:\\path\\to\\browser-portal
+cd /d "%~dp0"
 start "Node Server" cmd /k npm start
 timeout /t 5
-start "Cloudflare Tunnel" cmd /k cloudflared tunnel run browser-portal
+start "Cloudflare Tunnel" cmd /k cloudflared tunnel --url http://localhost:3000
 ```
 
-2. Create a shortcut to this file
-3. Press `Win+R`, type `shell:startup`, press Enter
-4. Move the shortcut to the Startup folder
+Double-click this file to start everything!
 
-### Mac/Linux (systemd service)
+### **Option 2: Auto-Start on Boot**
 
-Create `/etc/systemd/system/cloudflared-tunnel.service`:
+1. Press `Win+R`
+2. Type: `shell:startup`
+3. Press Enter
+4. Copy your `start-portal.bat` file into this folder
+
+---
+
+## 🔄 Run on Startup (Mac/Linux)
+
+Create systemd service at `/etc/systemd/system/browser-portal.service`:
+
 ```ini
 [Unit]
-Description=Cloudflare Tunnel
+Description=Browser Portal
 After=network.target
 
 [Service]
 Type=simple
 User=YOUR_USERNAME
-ExecStart=/usr/local/bin/cloudflared tunnel run browser-portal
+WorkingDirectory=/path/to/browser-portal
+ExecStart=/usr/bin/npm start
 Restart=always
-RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Enable and start:
+Enable:
 ```bash
-sudo systemctl enable cloudflared-tunnel
-sudo systemctl start cloudflared-tunnel
+sudo systemctl enable browser-portal
+sudo systemctl start browser-portal
 ```
 
 ---
 
-## Security Best Practices
+## ⚠️ Troubleshooting
 
-✅ **Advantages of Self-Hosting:**
-- Residential IP (harder to detect as proxy)
-- Full control over environment
-- No monthly costs
-- Better performance (no cloud latency)
+### **Problem: "cloudflared not recognized"**
 
-⚠️ **Important Security Notes:**
+**Solution:**
+- Close and reopen PowerShell after installation
+- Or add to PATH manually
+- Or run from download location: `.\cloudflared-windows-amd64.exe tunnel --url http://localhost:3000`
 
-1. **Firewall Protection**
-   - Cloudflare Tunnel = No port forwarding needed ✅
-   - Your home IP stays hidden
-   - All traffic goes through Cloudflare's secure network
+### **Problem: "Cannot determine default origin certificate"**
 
-2. **Rate Limiting**
-   - The app already has rate limiting configured
-   - Monitor your bandwidth usage
+**Solution:**
+You're trying to run `cloudflared tunnel run` without authenticating first.
 
-3. **Access Control**
-   - Consider adding authentication if exposing publicly
-   - Use strong passwords for any admin features
-
-4. **Keep PC Running**
-   - Server must stay on for 24/7 access
-   - Use "sleep prevention" if needed
-   - Consider power/network outages
-
----
-
-## Troubleshooting
-
-### Tunnel Not Connecting
-```bash
-# Check tunnel status
-cloudflared tunnel info browser-portal
-
-# View logs
-cloudflared tunnel run browser-portal --loglevel debug
+**Fix:** Use quick tunnel instead:
+```powershell
+cloudflared tunnel --url http://localhost:3000
 ```
 
-### Server Not Responding
-```bash
-# Test local server
-curl http://localhost:3000
+No authentication needed!
 
-# Check if port 3000 is in use
+### **Problem: "EADDRINUSE: Port 3000 already in use"**
+
+**Solution:**
+```powershell
+# Windows - Kill process on port 3000
 netstat -ano | findstr :3000
+taskkill /PID <PID_NUMBER> /F
+
+# Mac/Linux
+lsof -ti:3000 | xargs kill -9
 ```
 
-### Sites Still Detecting Proxy
-- Self-hosting with residential IP helps, but some sites (Netflix, Hulu) still detect iframes
-- Try accessing less restrictive sites first
-- Some sites block ALL iframe embedding regardless of IP
+### **Problem: "npm: command not found"**
+
+**Solution:**
+Install Node.js from https://nodejs.org
+
+### **Problem: Sites still detect proxy**
+
+**Reality Check:**
+- Some sites (Netflix, Hulu, Disney+) block ALL iframes regardless of IP
+- Self-hosting helps but doesn't guarantee success
+- Try less restrictive sites first (Reddit, Wikipedia, GitHub work well)
 
 ---
 
-## Alternative: ngrok (Backup Option)
+## 📊 Comparison: Quick vs Permanent Tunnel
 
-If Cloudflare Tunnel doesn't work:
+| Feature | Quick Tunnel | Permanent Tunnel |
+|---------|--------------|------------------|
+| Setup Time | 30 seconds | 5 minutes |
+| Authentication | None needed | Required |
+| URL | Changes each time | Same every time |
+| Custom Domain | ❌ No | ✅ Yes |
+| Best For | Testing | Production |
 
-```bash
-# Install ngrok: https://ngrok.com/download
-ngrok http 3000
+---
+
+## 🎯 Common Use Cases
+
+### **Just Testing:**
+```powershell
+# Window 1
+npm start
+
+# Window 2
+cloudflared tunnel --url http://localhost:3000
 ```
 
-Free tier limitations:
-- URL changes on restart
-- Less bandwidth than Cloudflare
-- Rate limits
+### **Daily Use:**
+Double-click your `start-portal.bat` file
+
+### **24/7 Server:**
+Set up auto-start on boot (see above)
 
 ---
 
-## Comparison
+## 🛡️ Security Best Practices
 
-| Feature | Cloudflare Tunnel | ngrok Free | Render |
-|---------|------------------|------------|--------|
-| Cost | Free | Free | Free |
-| Custom Domain | ✅ Yes | ❌ No | ✅ Yes |
-| Persistent URL | ✅ Yes | ❌ No | ✅ Yes |
-| Bandwidth | Unlimited | 1GB/month | Limited |
-| IP Type | Residential | Residential | Datacenter |
-| Detection Risk | Low | Low | High |
-| Uptime | Depends on PC | Depends on PC | 99.9% |
+✅ **Advantages:**
+- Residential IP (harder to detect)
+- No port forwarding needed
+- Traffic encrypted through Cloudflare
+- Your home IP stays hidden
+
+⚠️ **Important:**
+- Rate limiting already configured in code
+- Monitor bandwidth usage
+- Keep your PC running for 24/7 access
+- Consider UPS for power outages
 
 ---
 
-## Getting Help
+## 🆚 Self-Hosting vs Cloud Hosting
 
-If you encounter issues:
+| Factor | Self-Hosting | Render/Railway |
+|--------|--------------|----------------|
+| IP Type | Residential | Datacenter |
+| Detection Risk | Low | High |
+| Cost | Free (electricity) | Free tier limits |
+| Uptime | Depends on PC | 99.9% |
+| Setup | Medium | Easy |
+| Best For | Bypassing detection | Quick deployment |
 
-1. Check Cloudflare Tunnel docs: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/
-2. Verify your Node.js server is running: `npm start`
-3. Test locally first: http://localhost:3000
-4. Check firewall isn't blocking cloudflared
+---
 
-**Your app should now be accessible from anywhere with much better proxy detection avoidance!** 🎉
+## 📝 Quick Reference
+
+**Start Everything:**
+```powershell
+# Terminal 1
+cd C:\path\to\browser-portal
+npm start
+
+# Terminal 2
+cloudflared tunnel --url http://localhost:3000
+```
+
+**Stop Everything:**
+- Press `Ctrl+C` in both windows
+
+**Update Code:**
+```powershell
+git pull
+npm install
+```
+
+---
+
+## 🆘 Still Having Issues?
+
+1. **Check Node.js is installed:**
+   ```powershell
+   node --version
+   npm --version
+   ```
+
+2. **Check cloudflared is installed:**
+   ```powershell
+   cloudflared --version
+   ```
+
+3. **Test local server first:**
+   ```powershell
+   npm start
+   # Then open http://localhost:3000 in browser
+   ```
+
+4. **Check firewall isn't blocking:**
+   - Windows Defender Firewall
+   - Antivirus software
+
+---
+
+## 🎉 Success!
+
+If you see a URL like `https://xxx.trycloudflare.com` and can access your portal, you're done!
+
+**Your app is now:**
+- ✅ Publicly accessible
+- ✅ Using your residential IP
+- ✅ Much harder to detect as proxy
+- ✅ Free forever
+
+Enjoy your self-hosted browser portal! 🚀
