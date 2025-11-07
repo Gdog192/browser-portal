@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const puppeteer = require('puppeteer');
 const { v4: uuidv4 } = require('uuid');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,6 +14,23 @@ app.use(express.static(__dirname));
 
 // Store active browser sessions
 const sessions = new Map();
+
+// Configure multer for file uploads
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  }
+});
+
+const upload = multer({ storage });
 
 // Load configuration
 let config = {};
@@ -58,12 +76,7 @@ app.post('/api/screenshot/start', async (req, res) => {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     
     // Store session
-    sessions.set(sessionId, {
-      browser,
-      page,
-      url,
-      createdAt: Date.now()
-    });
+    sessions.set(sessionId, { browser, page, url, createdAt: Date.now() });
     
     res.json({ sessionId, success: true });
   } catch (error) {
@@ -84,17 +97,38 @@ app.get('/api/screenshot/get', async (req, res) => {
     const session = sessions.get(sessionId);
     const screenshot = await session.page.screenshot({ type: 'png' });
     
-    res.set('Content-Type', 'image/png');
-    res.send(screenshot);
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    res.end(screenshot, 'binary');
   } catch (error) {
-    console.error('Error capturing screenshot:', error);
+    console.error('Error taking screenshot:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Send action to page (click, type, scroll)
+// File upload endpoint
+app.post('/api/screenshot/upload', upload.single('file'), async (req, res) => {
+  const { sessionId } = req.body;
+  
+  if (!sessions.has(sessionId)) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  try {
+    const filePath = req.file.path;
+    res.json({ success: true, filePath });
+  } catch (error) {
+    console.error('Error handling file upload:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Perform action on the page
 app.post('/api/screenshot/action', async (req, res) => {
-  const { sessionId, action, data } = req.body;
+  const { sessionId, action, x, y, text, key, filePath } = req.body;
   
   if (!sessions.has(sessionId)) {
     return res.status(404).json({ error: 'Session not found' });
@@ -102,34 +136,39 @@ app.post('/api/screenshot/action', async (req, res) => {
   
   try {
     const session = sessions.get(sessionId);
-    const page = session.page;
     
     switch (action) {
       case 'click':
-        // Convert percentage to pixel coordinates
-        const viewport = page.viewport();
-        const x = (data.x / 100) * viewport.width;
-        const y = (data.y / 100) * viewport.height;
-        await page.mouse.click(x, y);
+        await session.page.mouse.click(x, y);
         break;
-        
+      
       case 'type':
-        // Type text (assumes a field is already focused or clicks were made)
-        await page.keyboard.type(data.text);
-        await page.keyboard.press('Enter'); // Auto-submit
+        await session.page.keyboard.type(text);
         break;
-        
+      
       case 'scroll':
-        const scrollAmount = data.amount || 500;
-        if (data.direction === 'down') {
-          await page.evaluate((amount) => window.scrollBy(0, amount), scrollAmount);
-        } else if (data.direction === 'up') {
-          await page.evaluate((amount) => window.scrollBy(0, -amount), scrollAmount);
+        await session.page.mouse.wheel({ deltaY: y });
+        break;
+      
+      case 'key':
+        await session.page.keyboard.press(key);
+        break;
+      
+      case 'upload':
+        if (!filePath) {
+          return res.status(400).json({ error: 'File path required for upload action' });
+        }
+        // Find file input on the page and upload file
+        const fileInput = await session.page.$('input[type="file"]');
+        if (fileInput) {
+          await fileInput.uploadFile(filePath);
+        } else {
+          return res.status(404).json({ error: 'No file input found on page' });
         }
         break;
-        
+      
       default:
-        return res.status(400).json({ error: 'Unknown action' });
+        return res.status(400).json({ error: 'Invalid action' });
     }
     
     res.json({ success: true });
@@ -162,8 +201,8 @@ app.post('/api/screenshot/stop', async (req, res) => {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     activeSessions: sessions.size,
     mode: 'screenshot'
   });
@@ -181,7 +220,7 @@ setInterval(() => {
   
   for (const [sessionId, session] of sessions.entries()) {
     if (now - session.createdAt > maxAge) {
-      console.log(`Cleaning up old session ${sessionId}`);
+      console.log(`Cleaning up old session: ${sessionId}`);
       session.browser.close().catch(console.error);
       sessions.delete(sessionId);
     }
@@ -190,7 +229,7 @@ setInterval(() => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Browser Portal (Screenshot Mode) running on http://localhost:${PORT}`);
-  console.log('Using Puppeteer for live screenshots - No iframe restrictions!');
-  console.log('Screenshot refresh rate: 200ms (5 FPS)');
+  console.log(`Browser Portal (Screenshot Mode) running on http://localhost:${PORT}/`);
+  console.log(`Using Puppeteer for live screenshots - No frame restrictions`);
+  console.log(`File upload support enabled with multer`);
 });
