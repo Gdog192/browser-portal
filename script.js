@@ -25,8 +25,8 @@ function renderSites() {
     const card = document.createElement('div');
     card.className = 'site-card';
     card.innerHTML = `
-      <img src="${site.icon}" alt="${site.name}" />
-      <p>${site.name}</p>
+      <img src="${site.name}" alt="${site.name}">
+      <h3>${site.name}</h3>
     `;
     card.addEventListener('click', () => openSite(site.url));
     grid.appendChild(card);
@@ -113,10 +113,10 @@ async function sendAction(action, data = {}) {
     await fetch('/api/screenshot/action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ 
         sessionId,
         action,
-        ...data
+        ...data 
       })
     });
     
@@ -225,29 +225,32 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('refresh-btn').addEventListener('click', async () => {
     if (currentUrl) {
       await startScreenshotSession(currentUrl);
-
-        // File upload button
+    }
+  });
+  
+  // File upload button
   document.getElementById('upload-file-btn').addEventListener('click', () => {
     document.getElementById('file-input').click();
   });
-
+  
   // Handle file selection
   document.getElementById('file-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
+    
     try {
       // Upload file to server
       const formData = new FormData();
       formData.append('file', file);
       formData.append('sessionId', sessionId);
-
+      
       const response = await fetch('/api/screenshot/upload', {
         method: 'POST',
         body: formData
       });
-
+      
       const data = await response.json();
+      
       if (data.success) {
         console.log('File uploaded successfully:', data.filename);
         // Trigger file input on the webpage
@@ -260,10 +263,8 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Error uploading file:', error);
       alert('Error uploading file. Please try again.');
     }
-
+    
     // Clear file input
     e.target.value = '';
-  });
-    }
   });
 });
