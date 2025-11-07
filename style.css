@@ -94,6 +94,14 @@ header h1 {
     display: none;
 }
 
+/* Fix iframe sizing */
+#content-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
 .iframe-header {
     display: flex;
     align-items: center;
