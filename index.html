@@ -10,8 +10,14 @@
     <div class="container">
         <header>
             <h1>Browser Portal</h1>
-            <p class="subtitle">Select a site to browse</p>
+            <p class="subtitle">Browse any website directly - No proxy!</p>
         </header>
+
+        <!-- Search Bar -->
+        <div class="search-container">
+            <input type="text" id="url-input" placeholder="Enter any URL (e.g., youtube.com, github.com)" />
+            <button id="go-button" class="go-btn">Go</button>
+        </div>
 
         <div id="site-grid" class="site-grid">
             <!-- Sites will be loaded dynamically from config.json -->
@@ -22,11 +28,10 @@
                 <button id="back-button" class="back-button">← Back to Sites</button>
                 <span id="site-title" class="site-title"></span>
             </div>
-            <iframe id="content-frame" src="" frameborder="0"></iframe>
+            <iframe id="content-frame" src="" frameborder="0" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
         </div>
     </div>
 
     <script src="script.js"></script>
 </body>
 </html>
-
