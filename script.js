@@ -3,127 +3,131 @@ let currentSite = null;
 
 // Load sites from config
 async function loadSites() {
-    try {
-        const response = await fetch('/api/config');
-        const data = await response.json();
-        sites = data.sites || [];
-        renderSites();
-    } catch (error) {
-        console.error('Error loading sites:', error);
-        showError('Failed to load sites. Please refresh the page.');
-    }
+  try {
+    const response = await fetch('/api/config');
+    const data = await response.json();
+    sites = data.sites || [];
+    renderSites();
+  } catch (error) {
+    console.error('Error loading sites:', error);
+    showError('Failed to load sites. Please refresh the page.');
+  }
 }
 
+// Render site grid
 function renderSites() {
-    const grid = document.getElementById('site-grid');
-    grid.innerHTML = '';
+  const grid = document.getElementById('site-grid');
+  grid.innerHTML = '';
 
-    sites.forEach(site => {
-        const card = document.createElement('div');
-        card.className = 'site-card';
-        card.onclick = () => openSite(site);
-
-        const icon = document.createElement('div');
-        icon.className = 'site-icon';
-        icon.textContent = site.icon || '🌐';
-
-        const name = document.createElement('div');
-        name.className = 'site-name';
-        name.textContent = site.name;
-
-        card.appendChild(icon);
-        card.appendChild(name);
-        grid.appendChild(card);
-    });
-}
-
-function openSite(site) {
-    currentSite = site;
-    const iframeContainer = document.getElementById('iframe-container');
-    const siteGrid = document.getElementById('site-grid');
-    const contentFrame = document.getElementById('content-frame');
-    const siteTitle = document.getElementById('site-title');
-
-    // Hide site grid, show iframe container
-    siteGrid.style.display = 'none';
-    iframeContainer.classList.remove('hidden');
-    siteTitle.textContent = site.name;
-
-    // Clear any previous error
-    const errorMsg = document.getElementById('iframe-error');
-    if (errorMsg) errorMsg.remove();
-
-    // Load site through proxy
-    const proxyUrl = `/api/proxy?url=${encodeURIComponent(site.url)}`;
-    contentFrame.src = proxyUrl;
-    
-    // Add error handler for iframe
-    contentFrame.onerror = () => {
-        showIframeError('Failed to load site. The site may be blocking proxy requests or require authentication.');
-    };
-    
-    // Handle iframe load errors
-    contentFrame.onload = () => {
-        try {
-            // Check if iframe content is accessible (same-origin policy may block this)
-            const iframeDoc = contentFrame.contentDocument || contentFrame.contentWindow.document;
-        } catch (e) {
-            // Cross-origin error is normal, but if we get here and content is empty, might be an issue
-            console.log('Iframe loaded (cross-origin check normal)');
-        }
-    };
-}
-
-function showIframeError(message) {
-    const iframeContainer = document.getElementById('iframe-container');
-    const contentFrame = document.getElementById('content-frame');
-    
-    // Remove existing error if any
-    const existingError = document.getElementById('iframe-error');
-    if (existingError) existingError.remove();
-    
-    // Create error message
-    const errorDiv = document.createElement('div');
-    errorDiv.id = 'iframe-error';
-    errorDiv.style.cssText = 'background: #ff6b6b; color: white; padding: 20px; margin: 20px; border-radius: 8px; text-align: center;';
-    errorDiv.innerHTML = `
-        <h3>⚠️ Unable to Load Site</h3>
-        <p>${message}</p>
-        <p><strong>Common reasons:</strong></p>
-        <ul style="text-align: left; display: inline-block;">
-            <li>Site blocks proxy requests (Netflix, YouTube, etc.)</li>
-            <li>Site requires authentication</li>
-            <li>Connection timeout</li>
-        </ul>
-        <p><button onclick="document.getElementById('iframe-container').querySelector('#back-button').click()" style="margin-top: 10px; padding: 10px 20px; background: white; color: #ff6b6b; border: none; border-radius: 5px; cursor: pointer;">← Back to Sites</button></p>
+  sites.forEach(site => {
+    const card = document.createElement('div');
+    card.className = 'site-card';
+    card.innerHTML = `
+      <img src="${site.icon}" alt="${site.name}" />
+      <p>${site.name}</p>
     `;
-    
-    // Insert error before iframe
-    contentFrame.parentNode.insertBefore(errorDiv, contentFrame);
+    card.addEventListener('click', () => openSite(site));
+    grid.appendChild(card);
+  });
 }
 
+// Open a site directly in iframe (no proxy)
+function openSite(site) {
+  currentSite = site;
+  const contentFrame = document.getElementById('content-frame');
+  const iframeContainer = document.getElementById('iframe-container');
+  const siteGrid = document.getElementById('site-grid');
+  
+  // Load site directly in iframe
+  contentFrame.src = site.url;
+  
+  // Show iframe, hide grid
+  iframeContainer.style.display = 'block';
+  siteGrid.style.display = 'none';
+}
+
+// Open a site from custom URL (search bar)
+function openSiteFromURL(url) {
+  const contentFrame = document.getElementById('content-frame');
+  const iframeContainer = document.getElementById('iframe-container');
+  const siteGrid = document.getElementById('site-grid');
+  
+  // Load URL directly in iframe
+  contentFrame.src = url;
+  
+  // Show iframe, hide grid
+  iframeContainer.style.display = 'block';
+  siteGrid.style.display = 'none';
+  
+  // Clear current site since this is a custom URL
+  currentSite = null;
+}
+
+// Go back to site grid
 function goBack() {
-    const iframeContainer = document.getElementById('iframe-container');
-    const siteGrid = document.getElementById('site-grid');
-    const contentFrame = document.getElementById('content-frame');
-
-    siteGrid.style.display = 'grid';
-    iframeContainer.classList.add('hidden');
-    contentFrame.src = '';
-    currentSite = null;
+  const contentFrame = document.getElementById('content-frame');
+  const iframeContainer = document.getElementById('iframe-container');
+  const siteGrid = document.getElementById('site-grid');
+  
+  // Stop loading and clear iframe
+  contentFrame.src = '';
+  
+  // Show grid, hide iframe
+  iframeContainer.style.display = 'none';
+  siteGrid.style.display = 'grid';
+  
+  currentSite = null;
 }
 
+// Search bar functionality
+function searchAndNavigate() {
+  const urlInput = document.getElementById('url-input');
+  let url = urlInput.value.trim();
+  
+  if (!url) {
+    return; // Don't navigate if empty
+  }
+  
+  // Normalize URL - add https:// if no protocol specified
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
+  
+  // Load the URL
+  openSiteFromURL(url);
+}
+
+// Show error message
 function showError(message) {
-    const grid = document.getElementById('site-grid');
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'error';
-    errorDiv.textContent = message;
-    grid.appendChild(errorDiv);
+  const siteGrid = document.getElementById('site-grid');
+  siteGrid.innerHTML = `<p class="error">${message}</p>`;
 }
 
-// Initialize
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
-    loadSites();
-    document.getElementById('back-button').addEventListener('click', goBack);
+  // Load sites from config
+  loadSites();
+  
+  // Back button event listener
+  const backButton = document.getElementById('back-button');
+  if (backButton) {
+    backButton.addEventListener('click', goBack);
+  }
+  
+  // Search bar event listeners
+  const goButton = document.getElementById('go-button');
+  const urlInput = document.getElementById('url-input');
+  
+  if (goButton) {
+    goButton.addEventListener('click', searchAndNavigate);
+  }
+  
+  if (urlInput) {
+    // Handle Enter key on search input
+    urlInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        searchAndNavigate();
+      }
+    });
+  }
 });
-
