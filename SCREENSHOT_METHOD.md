@@ -9,7 +9,7 @@ Browser Portal now uses **screenshot-based browsing** powered by Puppeteer to co
 Instead of loading websites in an iframe (which gets blocked), the server runs a **headless Chromium browser** via Puppeteer and:
 
 1. Loads the website in the background
-2. Takes screenshots every **200ms** (5 FPS)
+2. Takes screenshots every **50ms** (20 FPS)
 3. Streams these screenshots to your browser
 4. Sends your clicks, typing, and scrolls back to the headless browser
 5. The website thinks it's interacting with a real browser (because it is!)
@@ -57,7 +57,7 @@ The server will start on `http://localhost:3000`
 - **Refresh**: Reload the current page
 
 ### 📸 Live Screenshot Stream
-- 200ms refresh rate (5 FPS) - just like your friend's implementation!
+- 50ms refresh rate (20 FPS) for almost live experience!
 - Real-time updates as you interact
 - Shows exactly what the website looks like
 
@@ -69,178 +69,191 @@ The server will start on `http://localhost:3000`
 ## Usage Guide
 
 ### Opening a Website
-
 1. Enter a URL in the search bar (e.g., `google.com`, `youtube.com`)
 2. Click the **Go** button
 3. Wait 2-3 seconds for the page to load
 4. Start interacting!
 
 ### Clicking on the Page
-
 1. Simply **click anywhere** on the screenshot
 2. Your click position is calculated and sent to the real browser
-3. The page updates within 200ms
+3. The page updates within 50ms
 
 ### Typing Text
-
 1. Click the **⌨️ Type Mode** button
 2. An input overlay appears
 3. Type your text (e.g., a search query)
 4. Click **Send**
 5. The text is typed into the currently focused field on the website
-6. Press Enter automatically submits
-
-**Workflow Example (Google Search):**
-1. Navigate to `google.com`
-2. Click on the search box in the screenshot
-3. Click **Type Mode**
-4. Type "puppies"
-5. Click **Send**
-6. Results appear!
 
 ### Scrolling
+1. Use the **⬇️ Scroll Down** button to scroll down 500px
+2. Use the **⬆️ Scroll Up** button to scroll up 500px
+3. Scroll multiple times to navigate long pages
 
-- Click **⬇️ Scroll Down** to scroll down 500px
-- Click **⬆️ Scroll Up** to scroll up 500px
-- Repeat as needed to navigate long pages
-
-### Going Back
-
-- Click **← Back to Sites** to return to the site grid
-- This closes the browser session and stops the screenshot stream
+### Refreshing the Page
+1. Click the **🔄 Refresh** button to reload the current page
+2. Useful if the page becomes unresponsive
 
 ## Technical Details
 
 ### Architecture
 
 ```
-[Your Browser] <--200ms screenshot stream-- [Server]
-       |                                          |
-   (clicks, types)                         [Puppeteer]
-       |                                          |
-       +--------- actions sent ---------------> [Headless Chrome]
-                                                     |
-                                                [Real Website]
+┌──────────────┐          ┌──────────────┐          ┌──────────────┐
+│              │          │              │          │              │
+│   Browser    │◄────────►│   Express    │◄────────►│  Puppeteer   │
+│   (Client)   │          │    Server    │          │   Browser    │
+│              │          │              │          │              │
+└──────────────┘          └──────────────┘          └──────────────┘
+     │                           │                          │
+     │ 1. Request URL            │                          │
+     ├──────────────────────────►│                          │
+     │                           │ 2. Launch browser        │
+     │                           ├─────────────────────────►│
+     │                           │                          │ 3. Load page
+     │                           │                          ├────────┐
+     │                           │                          │◄───────┘
+     │                           │ 4. Capture screenshot    │
+     │                           │◄─────────────────────────┤
+     │ 5. Send PNG image         │                          │
+     │◄──────────────────────────┤                          │
+     │                           │                          │
+     │ 6. User clicks            │                          │
+     ├──────────────────────────►│                          │
+     │                           │ 7. Execute click         │
+     │                           ├─────────────────────────►│
+     │                           │                          │
+     │                           │ 8. New screenshot        │
+     │◄────────(loop every 50ms)─┴──────────────────────────┘
 ```
 
 ### API Endpoints
 
-#### `POST /api/screenshot/start`
+#### POST /api/screenshot/start
 Starts a new browser session
 ```json
-{"url": "https://example.com"}
+Request: { "url": "https://google.com" }
+Response: { "sessionId": "abc-123" }
 ```
-Returns: `{"sessionId": "uuid", "success": true}`
 
-#### `GET /api/screenshot/get?sessionId=xxx`
-Fetches the latest screenshot (PNG image)
+#### GET /api/screenshot/get?sessionId=abc-123
+Gets the latest screenshot (PNG image)
 
-#### `POST /api/screenshot/action`
+#### POST /api/screenshot/action
 Sends an action to the browser
 ```json
 {
-  "sessionId": "uuid",
-  "action": "click" | "type" | "scroll",
-  "data": {
-    "x": 50,  // percentage for click
-    "y": 30,  // percentage for click
-    "text": "search query",  // for type action
-    "direction": "down",  // for scroll
-    "amount": 500  // pixels to scroll
-  }
+  "sessionId": "abc-123",
+  "action": "click",
+  "x": 640,
+  "y": 360
 }
 ```
 
-#### `POST /api/screenshot/stop`
-Stops a browser session and cleans up
+Actions:
+- `click` - Click at coordinates (x, y)
+- `type` - Type text (text parameter)
+- `scroll` - Scroll page (direction: 'up'/'down', amount: pixels)
+
+#### POST /api/screenshot/stop
+Closes the browser session
+```json
+{ "sessionId": "abc-123" }
+```
 
 ### Performance
 
-- **Screenshot Rate**: 200ms (5 FPS)
-- **Browser Viewport**: 1280x720
-- **Session Timeout**: 30 minutes
-- **Memory**: ~150MB per active session
+- **Screenshot rate**: 20 FPS (50ms refresh)
+- **Latency**: ~100-200ms from action to visual update
+- **Memory**: ~150MB RAM per active session
+- **Browser startup**: ~2-3 seconds
+- **Screenshot size**: ~100-300KB per frame (compressed PNG)
+- **Bandwidth**: ~2-6 MB/s per active session
 
-### Limitations
+## Limitations
 
-1. **Not Real-Time Video**: 5 FPS is sufficient for browsing but not for watching videos
-2. **No Audio**: Screenshots don't include sound
-3. **Server Resources**: Each session uses ~150MB RAM
-4. **Click Precision**: May take practice for small buttons/links
-5. **Typing Workflow**: Requires clicking the element first, then using Type Mode
+### ⚠️ Not Suitable For
 
-## Comparison: Screenshot vs. Iframe
+1. **Video playback** - 20 FPS is not smooth enough for video
+2. **Gaming** - Too much latency for real-time games
+3. **Audio** - Screenshots don't capture sound
+4. **Heavy usage** - Each session uses significant resources
+5. **Click precision** - Small buttons may be hard to click accurately
+6. **Typing workflow** - Requires opening Type Mode overlay
+
+### 🔒 Security Considerations
+
+- All browsing happens on the server, not your local machine
+- Sessions are isolated per user
+- Auto-cleanup prevents abandoned sessions
+- Consider running behind authentication if deployed publicly
+
+## Comparison: Screenshot vs Iframe
 
 | Feature | Iframe Method | Screenshot Method |
-|---------|--------------|------------------|
-| **Google/YouTube** | ❌ Blocked | ✅ Works |
-| **Facebook/Twitter** | ❌ Blocked | ✅ Works |
-| **Banking Sites** | ❌ Blocked | ✅ Works |
-| **Speed** | ⚡ Instant | 🐌 200ms delay |
-| **Resource Usage** | 👍 Light | 💪 Heavy |
-| **Setup** | 🌿 Simple | 🔧 Puppeteer required |
-| **Restrictions** | Many | None |
+|---------|---------------|-------------------|
+| **Works with Google** | ❌ No | ✅ Yes |
+| **Works with YouTube** | ❌ No | ✅ Yes |
+| **Works with Facebook** | ❌ No | ✅ Yes |
+| **Works with ANY site** | ❌ Limited | ✅ Yes |
+| **Setup complexity** | ✅ Simple | ⚠️ Moderate |
+| **Server resources** | ✅ Low | ⚠️ High |
+| **Smoothness** | ✅ Native | ⚠️ 20 FPS |
+| **Latency** | ✅ None | ⚠️ 100-200ms |
+| **Audio support** | ✅ Yes | ❌ No |
+| **Video playback** | ✅ Good | ❌ Poor |
+| **Text input** | ✅ Native | ⚠️ Overlay |
 
 ## Troubleshooting
 
-### "Session not found" Error
-- The browser session expired (30 min timeout)
-- Click **Back** and try opening the site again
+### Browser session not starting
+- Check if Puppeteer is installed: `npm list puppeteer`
+- Re-run `npm install` to download Chromium
+- Check server logs for errors
 
-### Screenshot Not Updating
-- Check your network connection
-- Refresh the page
-- The site might be loading slowly - wait a few seconds
+### Screenshots not updating
+- Check your internet connection
+- Verify the session ID is valid
+- Try refreshing the page
 
-### Clicks Not Working
-- Make sure you're clicking directly on interactive elements
-- Try clicking in the center of buttons/links
-- Some elements may require scrolling into view first
+### Clicks not working
+- Click directly on elements, not too close to edges
+- Wait for the page to fully load before clicking
+- Use Type Mode for text input fields
 
-### Typing Not Working
-- Click the input field on the screenshot FIRST
-- Then use Type Mode
-- The field must be focused for typing to work
+### High memory usage
+- Each active session uses ~150MB RAM
+- Sessions auto-cleanup after 30 minutes
+- Manually stop sessions when done browsing
 
-### Puppeteer Installation Failed
-- Puppeteer downloads Chromium (~200MB) on first install
-- Ensure you have a stable internet connection
-- Try: `npm install puppeteer --unsafe-perm=true`
-
-## Security Considerations
-
-⚠️ **Important Notes:**
-
-1. **Server-Side Browsing**: All browsing happens on YOUR server, not the client
-2. **Session Isolation**: Each user gets their own browser session
-3. **No Credential Storage**: Logins are temporary and session-only
-4. **HTTPS Recommended**: Use HTTPS in production to protect screenshot data
-5. **Resource Limits**: Implement user limits to prevent server overload
-
-## Credits
-
-Inspired by your friend's implementation using 200ms screenshot refresh rate! This is the same method used by remote desktop tools like TeamViewer and Chrome Remote Desktop.
-
----
+### Page loads slowly
+- Initial load takes 2-3 seconds (browser startup)
+- Subsequent navigation is faster
+- Heavy websites may take longer to render
 
 ## Quick Start Commands
 
 ```bash
-# Install
+# Install everything
+git clone https://github.com/yourusername/browser-portal.git
+cd browser-portal
 npm install
 
-# Run
+# Start the server
 npm start
 
-# Open
-http://localhost:3000
-
-# Try browsing:
-- google.com
-- youtube.com
-- github.com
-- amazon.com
-# ALL work with no restrictions!
+# Open in browser
+open http://localhost:3000
 ```
 
-**Enjoy unrestricted browsing! 🎉**
+## Future Improvements
+
+- [ ] Increase refresh rate to 60 FPS with WebSocket streaming
+- [ ] Add touch gestures for mobile
+- [ ] Implement audio capture/streaming
+- [ ] Add browser back/forward buttons
+- [ ] Support multiple browser tabs
+- [ ] Add bookmarks and history
+- [ ] Implement zoom controls
+- [ ] Add screenshot download feature
