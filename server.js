@@ -47,7 +47,7 @@ app.get('/api/config', (req, res) => {
   res.json(config);
 });
 
-// Start screenshot session
+// Start screenshot session - ASYNC with immediate response
 app.post('/api/screenshot/start', async (req, res) => {
   const { url } = req.body;
   const sessionId = uuidv4();
@@ -55,34 +55,78 @@ app.post('/api/screenshot/start', async (req, res) => {
   try {
     console.log(`Starting session ${sessionId} for ${url}`);
     
-    // Launch browser in headless mode
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu'
-      ]
+    // Create session placeholder with "initializing" status
+    sessions.set(sessionId, {
+      status: 'initializing',
+      url,
+      createdAt: Date.now()
     });
     
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 720 });
+    // Respond immediately with sessionId
+    res.json({ sessionId, success: true, status: 'initializing' });
     
-    // Navigate to URL
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Launch browser in background (don't await here)
+    (async () => {
+      try {
+        const browser = await puppeteer.launch({
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+          ]
+        });
+        
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1280, height: 720 });
+        
+        // Navigate to URL
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        // Update session with browser and page
+        sessions.set(sessionId, {
+          browser,
+          page,
+          url,
+          status: 'ready',
+          createdAt: Date.now()
+        });
+        
+        console.log(`Session ${sessionId} ready`);
+      } catch (error) {
+        console.error(`Error initializing session ${sessionId}:`, error);
+        sessions.set(sessionId, {
+          status: 'error',
+          error: error.message,
+          url,
+          createdAt: Date.now()
+        });
+      }
+    })();
     
-    // Store session
-    sessions.set(sessionId, { browser, page, url, createdAt: Date.now() });
-    
-    res.json({ sessionId, success: true });
   } catch (error) {
-    console.error('Error starting session:', error);
+    console.error('Error creating session:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// Check session status
+app.get('/api/screenshot/status', (req, res) => {
+  const { sessionId } = req.query;
+  
+  if (!sessions.has(sessionId)) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  const session = sessions.get(sessionId);
+  res.json({ 
+    status: session.status,
+    error: session.error 
+  });
 });
 
 // Get screenshot
@@ -93,10 +137,18 @@ app.get('/api/screenshot/get', async (req, res) => {
     return res.status(404).json({ error: 'Session not found' });
   }
   
+  const session = sessions.get(sessionId);
+  
+  if (session.status === 'initializing') {
+    return res.status(202).json({ status: 'initializing', message: 'Browser is starting...' });
+  }
+  
+  if (session.status === 'error') {
+    return res.status(500).json({ error: session.error });
+  }
+  
   try {
-    const session = sessions.get(sessionId);
     const screenshot = await session.page.screenshot({ type: 'png' });
-    
     res.writeHead(200, { 'Content-Type': 'image/png' });
     res.end(screenshot, 'binary');
   } catch (error) {
@@ -119,7 +171,11 @@ app.post('/api/screenshot/upload', upload.single('file'), async (req, res) => {
   
   try {
     const filePath = req.file.path;
-    res.json({ success: true, filePath });
+    res.json({ 
+      success: true, 
+      filename: req.file.filename,
+      filePath 
+    });
   } catch (error) {
     console.error('Error handling file upload:', error);
     res.status(500).json({ error: error.message });
@@ -128,37 +184,45 @@ app.post('/api/screenshot/upload', upload.single('file'), async (req, res) => {
 
 // Perform action on the page
 app.post('/api/screenshot/action', async (req, res) => {
-  const { sessionId, action, x, y, text, key, filePath } = req.body;
+  const { sessionId, action, x, y, text, direction, amount, filename } = req.body;
   
   if (!sessions.has(sessionId)) {
     return res.status(404).json({ error: 'Session not found' });
   }
   
+  const session = sessions.get(sessionId);
+  
+  if (session.status !== 'ready') {
+    return res.status(202).json({ status: session.status, message: 'Browser not ready yet' });
+  }
+  
   try {
-    const session = sessions.get(sessionId);
-    
     switch (action) {
       case 'click':
         await session.page.mouse.click(x, y);
         break;
-      
+        
       case 'type':
         await session.page.keyboard.type(text);
         break;
-      
+        
       case 'scroll':
-        await session.page.mouse.wheel({ deltaY: y });
+        const scrollAmount = direction === 'down' ? amount : -amount;
+        await session.page.mouse.wheel({ deltaY: scrollAmount });
         break;
-      
+        
       case 'key':
-        await session.page.keyboard.press(key);
+        await session.page.keyboard.press(text);
         break;
-      
+        
       case 'upload':
-        if (!filePath) {
-          return res.status(400).json({ error: 'File path required for upload action' });
+        if (!filename) {
+          return res.status(400).json({ error: 'Filename required for upload action' });
         }
-        // Find file input on the page and upload file
+        const filePath = path.join(uploadDir, filename);
+        if (!fs.existsSync(filePath)) {
+          return res.status(404).json({ error: 'File not found' });
+        }
         const fileInput = await session.page.$('input[type="file"]');
         if (fileInput) {
           await fileInput.uploadFile(filePath);
@@ -166,7 +230,7 @@ app.post('/api/screenshot/action', async (req, res) => {
           return res.status(404).json({ error: 'No file input found on page' });
         }
         break;
-      
+        
       default:
         return res.status(400).json({ error: 'Invalid action' });
     }
@@ -188,9 +252,10 @@ app.post('/api/screenshot/stop', async (req, res) => {
   
   try {
     const session = sessions.get(sessionId);
-    await session.browser.close();
+    if (session.browser) {
+      await session.browser.close();
+    }
     sessions.delete(sessionId);
-    
     console.log(`Stopped session ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
@@ -201,8 +266,8 @@ app.post('/api/screenshot/stop', async (req, res) => {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  res.json({ 
+    status: 'ok', 
     activeSessions: sessions.size,
     mode: 'screenshot'
   });
@@ -221,7 +286,9 @@ setInterval(() => {
   for (const [sessionId, session] of sessions.entries()) {
     if (now - session.createdAt > maxAge) {
       console.log(`Cleaning up old session: ${sessionId}`);
-      session.browser.close().catch(console.error);
+      if (session.browser) {
+        session.browser.close().catch(console.error);
+      }
       sessions.delete(sessionId);
     }
   }
@@ -232,4 +299,5 @@ app.listen(PORT, () => {
   console.log(`Browser Portal (Screenshot Mode) running on http://localhost:${PORT}/`);
   console.log(`Using Puppeteer for live screenshots - No frame restrictions`);
   console.log(`File upload support enabled with multer`);
+  console.log(`Async session initialization for faster response times`);
 });
