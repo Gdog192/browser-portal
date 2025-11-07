@@ -20,7 +20,7 @@ async function loadSites() {
 function renderSites() {
   const grid = document.getElementById('site-grid');
   grid.innerHTML = '';
-
+  
   sites.forEach(site => {
     const card = document.createElement('div');
     card.className = 'site-card';
@@ -66,7 +66,7 @@ async function startScreenshotSession(url) {
     
     updateStatus('✅ Connected', 'connected');
     
-    // Start screenshot refresh loop (every 200ms like your friend's)
+    // Start screenshot refresh loop (faster for almost live updates)
     startScreenshotLoop();
   } catch (error) {
     console.error('Error starting session:', error);
@@ -80,10 +80,10 @@ function startScreenshotLoop() {
     clearInterval(screenshotInterval);
   }
   
-  // Refresh every 200ms (5 FPS)
+  // Refresh every 50ms (20 FPS) for almost live experience
   screenshotInterval = setInterval(async () => {
     await fetchScreenshot();
-  }, 200);
+  }, 50);
   
   // Initial fetch
   fetchScreenshot();
@@ -113,134 +113,118 @@ async function sendAction(action, data = {}) {
     await fetch('/api/screenshot/action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, action, data })
+      body: JSON.stringify({
+        sessionId,
+        action,
+        ...data
+      })
     });
+    
+    // Immediate screenshot update after action
+    await fetchScreenshot();
   } catch (error) {
     console.error('Error sending action:', error);
   }
 }
 
-// Stop screenshot session
-async function stopScreenshotSession() {
-  if (screenshotInterval) {
-    clearInterval(screenshotInterval);
-    screenshotInterval = null;
-  }
+// Update status indicator
+function updateStatus(text, className) {
+  const status = document.getElementById('connection-status');
+  status.textContent = text;
+  status.className = 'status ' + className;
+}
+
+// Show error message
+function showError(message) {
+  alert(message);
+}
+
+// Handle screenshot click for navigation
+document.addEventListener('DOMContentLoaded', () => {
+  loadSites();
   
-  if (sessionId) {
-    try {
-      await fetch('/api/screenshot/stop', {
+  // Search form
+  const searchForm = document.getElementById('search-form');
+  const searchInput = document.getElementById('search-input');
+  
+  searchForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = searchInput.value.trim();
+    if (url) {
+      await openSite(url);
+      searchInput.value = '';
+    }
+  });
+  
+  // Back button
+  document.getElementById('back-btn').addEventListener('click', () => {
+    // Stop screenshot session
+    if (sessionId) {
+      fetch('/api/screenshot/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId })
       });
-    } catch (error) {
-      console.error('Error stopping session:', error);
     }
+    
+    if (screenshotInterval) {
+      clearInterval(screenshotInterval);
+      screenshotInterval = null;
+    }
+    
     sessionId = null;
-  }
+    document.getElementById('screenshot-container').classList.add('hidden');
+    document.getElementById('site-grid').style.display = 'grid';
+  });
   
-  updateStatus('⚫ Disconnected', 'disconnected');
-}
-
-// Go back to site grid
-function goBack() {
-  stopScreenshotSession();
-  
-  document.getElementById('screenshot-container').classList.add('hidden');
-  document.getElementById('site-grid').style.display = 'grid';
-  
-  currentUrl = null;
-}
-
-// Search and navigate
-function searchAndNavigate() {
-  const urlInput = document.getElementById('url-input');
-  let url = urlInput.value.trim();
-  
-  if (!url) return;
-  
-  openSite(url);
-}
-
-// Update status indicator
-function updateStatus(text, className) {
-  const status = document.getElementById('screenshot-status');
-  status.textContent = text;
-  status.className = 'screenshot-status ' + className;
-}
-
-// Show error
-function showError(message) {
-  const grid = document.getElementById('site-grid');
-  grid.innerHTML = `<p class="error">${message}</p>`;
-}
-
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', () => {
-  loadSites();
-  
-  // Back button
-  document.getElementById('back-button').addEventListener('click', goBack);
-  
-  // Search bar
-  document.getElementById('go-button').addEventListener('click', searchAndNavigate);
-  document.getElementById('url-input').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') searchAndNavigate();
+  // Screenshot click for page interaction
+  const screenshotImg = document.getElementById('screenshot-img');
+  screenshotImg.addEventListener('click', async (e) => {
+    // Calculate click position relative to image
+    const rect = e.target.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 1280;
+    const y = ((e.clientY - rect.top) / rect.height) * 720;
+    
+    await sendAction('click', { x: Math.round(x), y: Math.round(y) });
   });
   
   // Control buttons
-  document.getElementById('click-mode').addEventListener('click', () => {
-    alert('Click on the screenshot to simulate clicks on the website');
-  });
-  
-  document.getElementById('type-mode').addEventListener('click', () => {
-    // Show input overlay
-    document.getElementById('input-overlay').classList.remove('hidden');
+  document.getElementById('type-btn').addEventListener('click', () => {
+    const overlay = document.getElementById('input-overlay');
+    overlay.classList.remove('hidden');
     document.getElementById('page-input').focus();
   });
   
-  document.getElementById('scroll-down').addEventListener('click', () => {
-    sendAction('scroll', { direction: 'down', amount: 500 });
-  });
-  
-  document.getElementById('scroll-up').addEventListener('click', () => {
-    sendAction('scroll', { direction: 'up', amount: 500 });
-  });
-  
-  document.getElementById('refresh-page').addEventListener('click', () => {
-    if (currentUrl) {
-      stopScreenshotSession();
-      setTimeout(() => openSite(currentUrl), 100);
+  document.getElementById('input-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'input-overlay') {
+      e.target.classList.add('hidden');
     }
   });
   
-  // Input overlay
-  document.getElementById('send-input').addEventListener('click', () => {
-    const input = document.getElementById('page-input');
-    const text = input.value;
-    if (text) {
-      sendAction('type', { text });
-      input.value = '';
+  document.getElementById('page-input').addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const text = e.target.value;
+      if (text) {
+        await sendAction('type', { text });
+        e.target.value = '';
+        document.getElementById('input-overlay').classList.add('hidden');
+      }
+    } else if (e.key === 'Escape') {
       document.getElementById('input-overlay').classList.add('hidden');
     }
   });
   
-  document.getElementById('close-overlay').addEventListener('click', () => {
-    document.getElementById('input-overlay').classList.add('hidden');
+  document.getElementById('scroll-down-btn').addEventListener('click', async () => {
+    await sendAction('scroll', { direction: 'down', amount: 500 });
   });
   
-  // Click on screenshot to simulate click on website
-  document.getElementById('screenshot-img').addEventListener('click', (e) => {
-    const img = e.target;
-    const rect = img.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Calculate percentage position (for scaling)
-    const xPercent = (x / rect.width) * 100;
-    const yPercent = (y / rect.height) * 100;
-    
-    sendAction('click', { x: xPercent, y: yPercent });
+  document.getElementById('scroll-up-btn').addEventListener('click', async () => {
+    await sendAction('scroll', { direction: 'up', amount: 500 });
+  });
+  
+  document.getElementById('refresh-btn').addEventListener('click', async () => {
+    if (currentUrl) {
+      await startScreenshotSession(currentUrl);
+    }
   });
 });
