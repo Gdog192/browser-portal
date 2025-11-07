@@ -1,37 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Browser Portal</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Portal - Screenshot Mode</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Browser Portal</h1>
-            <p class="subtitle">Browse any website directly - No proxy!</p>
-        </header>
+  <div class="container">
+    <header>
+      <h1>Browser Portal</h1>
+      <p class="subtitle">Browse any website via live screenshots - No iframe restrictions!</p>
+    </header>
 
-        <!-- Search Bar -->
-        <div class="search-container">
-            <input type="text" id="url-input" placeholder="Enter any URL (e.g., youtube.com, github.com)" />
-            <button id="go-button" class="go-btn">Go</button>
-        </div>
-
-        <div id="site-grid" class="site-grid">
-            <!-- Sites will be loaded dynamically from config.json -->
-        </div>
-
-        <div id="iframe-container" class="iframe-container hidden">
-            <div class="iframe-header">
-                <button id="back-button" class="back-button">← Back to Sites</button>
-                <span id="site-title" class="site-title"></span>
-            </div>
-            <iframe id="content-frame" src="" frameborder="0" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
-        </div>
+    <!-- Search Bar -->
+    <div class="search-container">
+      <input type="text" id="url-input" placeholder="Enter URL (e.g., youtube.com, github.com)" />
+      <button id="go-button" class="go-btn">Go</button>
     </div>
 
-    <script src="script.js"></script>
+    <!-- Site Grid (shows initially) -->
+    <div id="site-grid" class="site-grid"></div>
+
+    <!-- Screenshot Viewer (hidden initially) -->
+    <div id="screenshot-container" class="screenshot-container hidden">
+      <div class="screenshot-header">
+        <button id="back-button" class="back-button">← Back to Sites</button>
+        <div class="current-url" id="current-url">Loading...</div>
+        <div class="screenshot-status" id="screenshot-status">⚫ Disconnected</div>
+      </div>
+      
+      <!-- Screenshot Display -->
+      <div class="screenshot-wrapper">
+        <img id="screenshot-img" class="screenshot-img" alt="Website Screenshot" />
+        
+        <!-- Input Overlay for typing on the page -->
+        <div id="input-overlay" class="input-overlay hidden">
+          <input type="text" id="page-input" class="page-input" placeholder="Type here (will be sent to website)..." />
+          <button id="send-input" class="send-btn">Send</button>
+          <button id="close-overlay" class="close-btn">✕</button>
+        </div>
+      </div>
+      
+      <!-- Controls -->
+      <div class="controls">
+        <button id="click-mode" class="control-btn">🖱️ Click Mode</button>
+        <button id="type-mode" class="control-btn">⌨️ Type Mode</button>
+        <button id="scroll-down" class="control-btn">⬇️ Scroll Down</button>
+        <button id="scroll-up" class="control-btn">⬆️ Scroll Up</button>
+        <button id="refresh-page" class="control-btn">🔄 Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
