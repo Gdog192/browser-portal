@@ -1,8 +1,8 @@
 const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const { URL } = require('url');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -70,113 +70,8 @@ function isAllowedHost(hostname) {
   return allowedHosts.has(hostname);
 }
 
-// OPTIMIZED: Single reusable proxy middleware with router
-const proxyMiddleware = createProxyMiddleware({
-  router: (req) => {
-    // Extract target URL from query param
-    const targetUrl = req.query.url;
-    if (!targetUrl) return null;
-    return targetUrl;
-  },
-  changeOrigin: true,
-  followRedirects: true,
-  ws: false,
-  timeout: 60000,
-  proxyTimeout: 60000,
-  // REMOVED pathRewrite - it was breaking URLs with paths
-  onProxyReq: (proxyReq, req, res) => {
-    // Set realistic browser headers
-    proxyReq.setHeader('User-Agent', req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-    proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8');
-    proxyReq.setHeader('Accept-Language', req.headers['accept-language'] || 'en-US,en;q=0.9');
-    proxyReq.setHeader('Accept-Encoding', 'gzip, deflate, br');
-    proxyReq.setHeader('Referer', req.query.url || req.headers.referer || '');
-    proxyReq.setTimeout(60000);
-  },
-  onProxyRes: (proxyRes, req, res) => {
-    // Normalize header keys to lowercase
-    const headers = {};
-    Object.keys(proxyRes.headers || {}).forEach(k => {
-      headers[k.toLowerCase()] = proxyRes.headers[k];
-    });
-
-    // Remove framing restrictions
-    delete headers['x-frame-options'];
-    
-    // Remove frame-ancestors from CSP
-    if (headers['content-security-policy']) {
-      headers['content-security-policy'] = headers['content-security-policy']
-        .replace(/frame-ancestors[^;]*;?/gi, '');
-    }
-
-    // CORS headers for iframe embedding
-    headers['access-control-allow-origin'] = '*';
-    headers['access-control-allow-methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
-    headers['access-control-allow-headers'] = 'Content-Type, Authorization';
-
-    // Rewrite Location header for redirects
-    if (headers['location'] && headers['location'].startsWith('http')) {
-      headers['location'] = `/api/proxy?url=${encodeURIComponent(headers['location'])}`;
-    }
-
-    // Sanitize cookies - remove Domain attribute
-    if (headers['set-cookie']) {
-      try {
-        if (Array.isArray(headers['set-cookie'])) {
-          headers['set-cookie'] = headers['set-cookie'].map(cookie => 
-            cookie.replace(/;\s*Domain=[^;]+/i, '')
-          );
-        } else {
-          headers['set-cookie'] = headers['set-cookie'].replace(/;\s*Domain=[^;]+/i, '');
-        }
-      } catch (e) {
-        console.warn('Cookie sanitization error:', e.message);
-      }
-    }
-
-    // Apply all modified headers to response
-    Object.keys(headers).forEach(key => {
-      res.setHeader(key, headers[key]);
-    });
-  },
-  onError: (err, req, res) => {
-    console.error('Proxy error:', err.code || err.message, 'for URL:', req.query.url);
-    if (!res.headersSent) {
-      const errorPage = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Proxy Error</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 50px; background: #f5f5f5; }
-            .error-container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
-            h1 { color: #e74c3c; }
-            .error-code { color: #666; font-size: 14px; margin-top: 20px; }
-            .back-btn { display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; }
-          </style>
-        </head>
-        <body>
-          <div class="error-container">
-            <h1>⚠️ Proxy Error</h1>
-            <p>The requested site could not be loaded through the proxy.</p>
-            <p><strong>Error:</strong> ${err.code === 'ECONNREFUSED' ? 'Connection refused' : err.code === 'ETIMEDOUT' ? 'Connection timeout' : 'Unknown error'}</p>
-            <p class="error-code">Error code: ${err.code || 'UNKNOWN'}</p>
-            <a href="/" class="back-btn">← Back to Home</a>
-          </div>
-        </body>
-        </html>
-      `;
-      if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND') {
-        res.status(502).send(errorPage);
-      } else {
-        res.status(500).send(errorPage);
-      }
-    }
-  }
-});
-
-// Request validation middleware
-function validateProxyRequest(req, res, next) {
+// Manual proxy implementation using native http/https
+function handleProxyRequest(req, res) {
   const targetUrl = req.query.url;
   
   if (!targetUrl) {
@@ -204,7 +99,104 @@ function validateProxyRequest(req, res, next) {
     });
   }
 
-  next();
+  // Choose http or https module based on protocol
+  const protocol = target.protocol === 'https:' ? https : http;
+  
+  // Prepare request options
+  const options = {
+    hostname: target.hostname,
+    port: target.port || (target.protocol === 'https:' ? 443 : 80),
+    path: target.pathname + target.search,
+    method: req.method,
+    headers: {
+      'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': req.headers['accept-language'] || 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Referer': targetUrl,
+      'Connection': 'close'
+    },
+    timeout: 60000
+  };
+
+  console.log(`Proxying request to: ${targetUrl}`);
+
+  const proxyReq = protocol.request(options, (proxyRes) => {
+    // Remove framing restrictions
+    const headers = {};
+    Object.keys(proxyRes.headers).forEach(k => {
+      const key = k.toLowerCase();
+      if (key === 'x-frame-options') return;
+      if (key === 'content-security-policy') {
+        headers[k] = proxyRes.headers[k].replace(/frame-ancestors[^;]*;?/gi, '');
+      } else if (key === 'set-cookie') {
+        // Sanitize cookies
+        const cookies = Array.isArray(proxyRes.headers[k]) ? proxyRes.headers[k] : [proxyRes.headers[k]];
+        headers[k] = cookies.map(cookie => cookie.replace(/;\s*Domain=[^;]+/i, ''));
+      } else if (key === 'location' && proxyRes.headers[k].startsWith('http')) {
+        headers[k] = `/api/proxy?url=${encodeURIComponent(proxyRes.headers[k])}`;
+      } else {
+        headers[k] = proxyRes.headers[k];
+      }
+    });
+
+    // Add CORS headers
+    headers['access-control-allow-origin'] = '*';
+    headers['access-control-allow-methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+    headers['access-control-allow-headers'] = 'Content-Type, Authorization';
+
+    // Set response headers
+    res.writeHead(proxyRes.statusCode, headers);
+
+    // Pipe response data
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('Proxy request error:', err.code || err.message, 'for URL:', targetUrl);
+    if (!res.headersSent) {
+      const errorPage = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Proxy Error</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 50px; background: #f5f5f5; }
+            .error-container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
+            h1 { color: #e74c3c; }
+            .error-code { color: #666; font-size: 14px; margin-top: 20px; }
+            .back-btn { display: inline-block; margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; }
+          </style>
+        </head>
+        <body>
+          <div class="error-container">
+            <h1>⚠️ Proxy Error</h1>
+            <p>The requested site could not be loaded through the proxy.</p>
+            <p><strong>Error:</strong> ${err.code === 'ECONNREFUSED' ? 'Connection refused' : err.code === 'ETIMEDOUT' ? 'Connection timeout' : err.code === 'ENOTFOUND' ? 'Host not found' : 'Unknown error'}</p>
+            <p class="error-code">Error code: ${err.code || 'UNKNOWN'}</p>
+            <p><strong>URL:</strong> ${targetUrl}</p>
+            <a href="/" class="back-btn">← Back to Home</a>
+          </div>
+        </body>
+        </html>
+      `;
+      res.status(502).send(errorPage);
+    }
+  });
+
+  proxyReq.on('timeout', () => {
+    proxyReq.destroy();
+    if (!res.headersSent) {
+      res.status(504).send('Gateway Timeout');
+    }
+  });
+
+  // Handle request body for POST/PUT
+  if (req.method === 'POST' || req.method === 'PUT') {
+    req.pipe(proxyReq);
+  } else {
+    proxyReq.end();
+  }
 }
 
 // API endpoint to serve config to frontend
@@ -216,9 +208,9 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-// Proxy endpoints with validation
-app.get('/api/proxy', validateProxyRequest, proxyMiddleware);
-app.post('/api/proxy', validateProxyRequest, proxyMiddleware);
+// Proxy endpoints
+app.get('/api/proxy', handleProxyRequest);
+app.post('/api/proxy', handleProxyRequest);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
