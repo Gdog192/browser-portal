@@ -51,10 +51,12 @@ async function openSite(url) {
   await startScreenshotSession(url);
 }
 
-// Start screenshot session
+// Start screenshot session with async initialization support
 async function startScreenshotSession(url) {
   try {
-    // Initialize browser session on server
+    updateStatus('⏳ Launching browser...', 'connected');
+    
+    // Initialize browser session on server (responds immediately)
     const response = await fetch('/api/screenshot/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -64,14 +66,55 @@ async function startScreenshotSession(url) {
     const data = await response.json();
     sessionId = data.sessionId;
     
+    console.log('Session started:', sessionId, 'Status:', data.status);
+    
+    // Wait for browser to be ready
+    if (data.status === 'initializing') {
+      updateStatus('⏳ Loading page...', 'connected');
+      await waitForSessionReady();
+    }
+    
     updateStatus('✅ Connected', 'connected');
     
-    // Start screenshot refresh loop (faster for almost live updates)
+    // Start screenshot refresh loop
     startScreenshotLoop();
   } catch (error) {
     console.error('Error starting session:', error);
     updateStatus('❌ Error', 'error');
+    alert('Failed to start browser session: ' + error.message);
   }
+}
+
+// Wait for session to be ready
+async function waitForSessionReady() {
+  const maxAttempts = 60; // 30 seconds (500ms * 60)
+  let attempts = 0;
+  
+  while (attempts < maxAttempts) {
+    try {
+      const response = await fetch(`/api/screenshot/status?sessionId=${sessionId}`);
+      const data = await response.json();
+      
+      console.log('Session status:', data.status);
+      
+      if (data.status === 'ready') {
+        return; // Browser is ready
+      }
+      
+      if (data.status === 'error') {
+        throw new Error(data.error || 'Browser initialization failed');
+      }
+      
+      // Still initializing, wait and retry
+      await new Promise(resolve => setTimeout(resolve, 500));
+      attempts++;
+    } catch (error) {
+      console.error('Error checking session status:', error);
+      throw error;
+    }
+  }
+  
+  throw new Error('Browser initialization timeout');
 }
 
 // Screenshot refresh loop
@@ -95,6 +138,18 @@ async function fetchScreenshot() {
   
   try {
     const response = await fetch(`/api/screenshot/get?sessionId=${sessionId}`);
+    
+    // Handle 202 status (still initializing)
+    if (response.status === 202) {
+      console.log('Browser still initializing...');
+      return;
+    }
+    
+    if (!response.ok) {
+      console.error('Screenshot fetch failed:', response.status);
+      return;
+    }
+    
     const blob = await response.blob();
     const imageUrl = URL.createObjectURL(blob);
     
@@ -110,7 +165,7 @@ async function sendAction(action, data = {}) {
   if (!sessionId) return;
   
   try {
-    await fetch('/api/screenshot/action', {
+    const response = await fetch('/api/screenshot/action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -119,6 +174,18 @@ async function sendAction(action, data = {}) {
         ...data 
       })
     });
+    
+    const result = await response.json();
+    
+    // Handle 202 status (browser not ready yet)
+    if (response.status === 202) {
+      console.log('Action queued, browser not ready yet');
+      return;
+    }
+    
+    if (!result.success) {
+      console.error('Action failed:', result.error);
+    }
     
     // Immediate screenshot update after action
     await fetchScreenshot();
