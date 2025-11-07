@@ -225,6 +225,45 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('refresh-btn').addEventListener('click', async () => {
     if (currentUrl) {
       await startScreenshotSession(currentUrl);
+
+        // File upload button
+  document.getElementById('upload-file-btn').addEventListener('click', () => {
+    document.getElementById('file-input').click();
+  });
+
+  // Handle file selection
+  document.getElementById('file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      // Upload file to server
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('sessionId', sessionId);
+
+      const response = await fetch('/api/screenshot/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        console.log('File uploaded successfully:', data.filename);
+        // Trigger file input on the webpage
+        await sendAction('upload', { filename: data.filename });
+      } else {
+        console.error('File upload failed:', data.error);
+        alert('Failed to upload file: ' + data.error);
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      alert('Error uploading file. Please try again.');
+    }
+
+    // Clear file input
+    e.target.value = '';
+  });
     }
   });
 });
